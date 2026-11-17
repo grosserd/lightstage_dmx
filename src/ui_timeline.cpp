@@ -38,8 +38,15 @@ struct TlUi
 	float headW   = 0;
 	double userScrollT = -10;//last horizontal scroll / zoom by the user (the playhead follow waits a moment)
 	bool vbar     = false;   //dragging the vertical scroll bar
+	double prevPos = -1;     //playhead in the last frame (jump = click / locate, not playback)
 	char lenBuf[ 32 ] = "";
-	int drag      = 0;//1 move keys, 2 box select, 3 scrub, 4 Bezier handle, 5 marker, 6 cue, 7 loop range, 8 summary keys
+	int drag      = 0;//1 move keys, 2 box select, 3 scrub, 4 Bezier handle, 5 marker, 6 cue, 7 loop range, 8 summary keys, 9-13 clip, 14 audio offset, 15 move sections, 16 / 17 trim a section's left / right edge
+	//sections (blocks of a collapsed track): the grabbed block, how far its edges may go, all blocks that move with it
+	uint32_t blkTrack = 0;
+	double blkT0 = 0, blkT1 = 0, blkLo = 0, blkHi = 1e18;
+	struct BlkSel { uint32_t track; double t0, t1; };
+	std::vector< BlkSel > blkSel;
+	TlRangeClip rangeClip;//copied range over all tracks
 	ImVec2 dragStart;
 	double dragT0 = 0;
 	float dragV0  = 0;
@@ -741,9 +748,71 @@ void App::TimelineWindow()
 	ImGui::End();
 }
 
+uint32_t App::TimelineAddClip( int kind, uint32_t snap, int fx, double t, uint32_t trackUid )
+{
+	Timeline& tl = show.tl;
+	TlTrack* trk = tl.Find( trackUid );
+	if( trk && trk->kind != TlTrackKind::Clips ) trk = nullptr;
+	if( !trk )
+		for( auto& o : tl.tracks )
+			if( o.kind == TlTrackKind::Clips ) { trk = &o; break; }
+	if( !trk )
+	{
+		TlTrack n;
+		n.uid   = tl.NewUid();
+		n.kind  = TlTrackKind::Clips;
+		n.name  = L( "Clips" );
+		n.color = V3( 0.75f, 0.5f, 1.0f );
+		tl.tracks.push_back( n );
+		trk = &tl.tracks.back();
+	}
+	TlClip c;
+	c.kind = kind == (int)TlClipKind::Effect ? TlClipKind::Effect : TlClipKind::Snapshot;
+	c.snap = snap;
+	c.fx   = fx;
+	c.t    = std::max( 0.0, t );
+	c.len  = std::max( 1.0, tl.GridStep() > 0 ? tl.GridStep() * 8 : 4.0 );
+	for( auto& o : trk->clips ) o.sel = false;
+	c.sel = true;
+	trk->clips.push_back( c );
+	tl.length    = std::max( tl.length, c.t + c.len );
+	g.selTrack   = trk->uid;
+	show.dirty   = true;
+	undoTouched_ = true;
+	return trk->uid;
+}
+bool App::AddAudioTrack( const std::string& file, double offset )
+{
+	Timeline& tl = show.tl;
+	show.dirty   = true;
+	undoTouched_ = true;
+	for( auto& t : tl.tracks )
+		if( t.kind == TlTrackKind::Audio )
+		{
+			t.file = file;
+			t.name = FileStem( file );
+			if( offset >= 0 ) t.offset = offset;
+			return false;
+		}
+	TlTrack t;
+	t.uid    = tl.NewUid();
+	t.kind   = TlTrackKind::Audio;
+	t.name   = FileStem( file );
+	t.file   = file;
+	t.offset = std::max( 0.0, offset );
+	t.color  = V3( 0.55f, 0.6f, 0.7f );
+	tl.tracks.insert( tl.tracks.begin(), t );
+	return true;
+}
+
 void App::TimelinePanel()
 {
 	if( tlConvert_ ) { TlConvertShowTrack( tlConvert_ ); tlConvert_ = 0; }
+	if( tlDrop_.on )
+	{
+		tlDrop_.on = false;
+		TimelineAddClip( tlDrop_.d.kind, tlDrop_.d.snap, tlDrop_.d.fx, tlDrop_.t, tlDrop_.track );
+	}
 	Timeline& tl  = show.tl;
 	TlRuntime& rt = tl.rt;
 	ImGuiIO& io   = ImGui::GetIO();
@@ -894,7 +963,7 @@ void App::TimelinePanel()
 	ImGui::SetNextItemWidth( 84 * ui );
 	if( ImGui::Combo( "##tlgrid", &tl.grid, L( "Aus\0" "1 Takt\0" "1 Beat\0" "1/2\0" "1/4\0" "1/8\0" "1 s\0" "0,1 s\0" "Frames\0" ) ) ) show.dirty = true;
 	ImGui::SameLine();
-	if( ImGui::Checkbox( L( "Einrasten" ), &tl.snap ) ) show.dirty = true;
+	if( ls::Chip( L( "Einrasten" ), &tl.snap ) ) show.dirty = true;
 	if( ImGui::IsItemHovered() ) ImGui::SetTooltip( "%s", L( "Keys rasten im Raster ein (Strg beim Ziehen = frei)" ) );
 	ImGui::SameLine();
 	ImGui::SetNextItemWidth( 74 * ui );
@@ -950,7 +1019,7 @@ void App::TimelinePanel()
 		OscContext( "/ls/tl/master" );
 	}
 	ImGui::SameLine();
-	if( ImGui::Checkbox( L( "Ausgabe" ), &tl.output ) ) show.dirty = true;
+	if( ls::Chip( L( "Ausgabe" ), &tl.output, ImVec4( 0.35f, 0.85f, 0.5f, 1 ) ) ) show.dirty = true;
 	if( ImGui::IsItemHovered() ) ImGui::SetTooltip( "%s", L( "Die Time Line schreibt in die Lampen (über den Snapshots, unter den Effekten).\nIm Programmer bewegte Kanäle haben Vorrang bis zum nächsten Play / Positionswechsel." ) );
 	GroupBreak( 360 * ui, ui );
 	if( ImGui::Button( L( "+ Spur##tladd" ) ) ) ImGui::OpenPopup( "##tladd" );
@@ -998,17 +1067,7 @@ void App::TimelinePanel()
 		if( ImGui::MenuItem( L( "Audiospur (Datei laden)..." ), nullptr, false, !hasAudio ) )
 		{
 			const std::string f = OpenAudioDialog();
-			if( !f.empty() )
-			{
-				TlTrack t;
-				t.uid   = tl.NewUid();
-				t.kind  = TlTrackKind::Audio;
-				t.name  = FileStem( f );
-				t.file  = f;
-				t.color = V3( 0.55f, 0.6f, 0.7f );
-				tl.tracks.insert( tl.tracks.begin(), t );
-				show.dirty = true;
-			}
+			if( !f.empty() ) AddAudioTrack( f, -1 );
 		}
 		if( ImGui::MenuItem( L( "Lightshow-Spur (Datei laden)..." ) ) )
 		{
@@ -1042,7 +1101,7 @@ void App::TimelinePanel()
 		ImGui::EndPopup();
 	}
 	ImGui::SameLine();
-	if( ImGui::Checkbox( L( "3D-Pfad" ), &tlPath_ ) ) {}
+	ls::Chip( L( "3D-Pfad" ), &tlPath_ );
 	if( ImGui::IsItemHovered() ) ImGui::SetTooltip( "%s", L( "Bewegungspfad (Pan/Tilt) der ausgewählten Spur im 3D-Fenster" ) );
 	if( !tlWin_ )
 	{
@@ -1064,6 +1123,7 @@ void App::TimelinePanel()
 	if( g.pps <= 0 ) g.pps = (float)std::max( 4.0, ( X1 - X0 ) / std::max( 10.0, tl.length ) );
 	auto X  = [ & ]( double t ) { return (float)( X0 + ( t - g.view0 ) * g.pps ); };
 	auto T  = [ & ]( float x ) { return g.view0 + ( x - X0 ) / g.pps; };
+	tlGeo_.x0 = X0; tlGeo_.y0 = area0.y; tlGeo_.x1 = X1; tlGeo_.y1 = Y1; tlGeo_.pps = g.pps; tlGeo_.view0 = g.view0; tlGeo_.frame = ImGui::GetFrameCount();
 	//rows
 	std::vector< Row > rows;
 	float ty = 0;
@@ -1112,6 +1172,56 @@ void App::TimelinePanel()
 	ImGui::InvisibleButton( "##tlcurves", ImVec2( std::max( 1.0f, X1 - X0 ), std::max( 1.0f, Y1 - Y0 ) ), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle );
 	const bool curvesHov = ImGui::IsItemHovered();
 	const bool curvesAct = ImGui::IsItemActive();
+	//drag & drop: a snapshot / effect from its list becomes a block at the mouse - on the clip track under the mouse,
+	//else on the first clip track (a new one when there is none). Applied next frame (the track list may grow).
+	if( ImGui::BeginDragDropTarget() )
+	{
+		const ImGuiPayload* pk = ImGui::GetDragDropPayload();
+		if( pk && pk->IsDataType( "LS_TLCLIP" ) )
+		{
+			const ImVec2 m = io.MousePos;
+			double dt      = std::max( 0.0, T( m.x ) );
+			if( !io.KeyCtrl ) dt = std::max( 0.0, tl.Snap( dt ) );
+			const Row* target = nullptr;
+			bool anyClipTrack = false;
+			for( auto& r : rows )
+			{
+				if( r.kind != 3 ) continue;
+				anyClipTrack = true;
+				if( m.y >= RY( r ) && m.y < RY( r ) + r.h ) target = &r;
+			}
+			if( !target )
+				for( auto& r : rows )
+					if( r.kind == 3 ) { target = &r; break; }
+			const double len = std::max( 1.0, tl.GridStep() > 0 ? tl.GridStep() * 8 : 4.0 );
+			ImDrawList* fg   = ImGui::GetForegroundDrawList();
+			fg->PushClipRect( ImVec2( X0, Y0 ), ImVec2( X1, Y1 ), false );
+			const float gx0 = X( dt ), gx1 = X( dt + len );
+			if( target )
+			{
+				const float gy = RY( *target );
+				fg->AddRectFilled( ImVec2( gx0, gy + 2 * ui ), ImVec2( gx1, gy + target->h - 2 * ui ), IM_COL32( 255, 170, 60, 70 ), 4 * ui );
+				fg->AddRect( ImVec2( gx0, gy + 2 * ui ), ImVec2( gx1, gy + target->h - 2 * ui ), IM_COL32( 255, 170, 60, 255 ), 4 * ui, 0, 2.0f );
+			}
+			fg->AddLine( ImVec2( gx0, Y0 ), ImVec2( gx0, Y1 ), IM_COL32( 255, 170, 60, 200 ), 1.5f );
+			{
+				const std::string lbl = TcStr( dt, tl.fps ) + ( anyClipTrack ? std::string() : std::string( "  " ) + L( "(neue Clip-Spur)" ) );
+				const ImVec2 ts       = ImGui::CalcTextSize( lbl.c_str() );
+				const ImVec2 lp( gx0 + 6 * ui, Y0 + 4 * ui );
+				fg->AddRectFilled( ImVec2( lp.x - 4 * ui, lp.y - 2 * ui ), ImVec2( lp.x + ts.x + 4 * ui, lp.y + ts.y + 2 * ui ), IM_COL32( 20, 22, 28, 235 ), 4 * ui );
+				fg->AddText( lp, IM_COL32( 255, 190, 100, 255 ), lbl.c_str() );
+			}
+			fg->PopClipRect();
+			if( const ImGuiPayload* p = ImGui::AcceptDragDropPayload( "LS_TLCLIP", ImGuiDragDropFlags_AcceptNoDrawDefaultRect ) )
+			{
+				tlDrop_.on    = true;
+				tlDrop_.d     = *(const TlClipDrag*)p->Data;
+				tlDrop_.t     = dt;
+				tlDrop_.track = target ? tl.tracks[ target->track ].uid : 0;
+			}
+		}
+		ImGui::EndDragDropTarget();
+	}
 	ImGui::SetCursorScreenPos( ImVec2( X0, area0.y ) );
 	ImGui::InvisibleButton( "##tlruler", ImVec2( std::max( 1.0f, X1 - X0 ), rulerH ), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight );
 	const bool rulerHov = ImGui::IsItemHovered();
@@ -1162,13 +1272,22 @@ void App::TimelinePanel()
 		}
 	}
 	//while playing the playhead runs to the middle, then the time scrolls under it
+	//(a click / locate does not move the view: the playhead may be placed anywhere; if it stands right of the
+	// middle, it keeps that screen position while the time scrolls under it)
 	if( rt.playing && g.drag == 0 && Now() - g.userScrollT > 1.5 )
 	{
-		const float half = ( X1 - X0 ) * 0.5f;
-		const float px   = X( rt.pos );
-		if( px > X0 + half ) g.view0 = rt.pos - half / g.pps;
-		else if( px < X0 ) g.view0 = rt.pos - half / g.pps;
+		const float half  = ( X1 - X0 ) * 0.5f;
+		const float px    = X( rt.pos );
+		const bool jumped = g.prevPos < 0 || rt.pos < g.prevPos || rt.pos - g.prevPos > 0.25;
+		if( px < X0 || px > X1 ) g.view0 = rt.pos - half / g.pps;//out of view: centre it
+		else if( !jumped && px > X0 + half )
+		{
+			const float prevPx = X( g.prevPos );
+			const float hold   = prevPx > X0 + half ? std::min( prevPx, X1 ) : X0 + half;
+			g.view0            = rt.pos - ( hold - X0 ) / g.pps;
+		}
 	}
+	g.prevPos = rt.pos;
 	g.view0 = std::max( -20.0 * ui / g.pps, g.view0 );
 
 	//================= background, grid
@@ -1303,6 +1422,35 @@ void App::TimelinePanel()
 			if( ImGui::MenuItem( L( "Loop-Anfang hier" ) ) ) { tl.loopA = g.popT; if( tl.loopB <= tl.loopA ) tl.loopB = tl.loopA + 4 * spb; show.dirty = true; }
 			if( ImGui::MenuItem( L( "Loop-Ende hier" ) ) ) { tl.loopB = std::max( g.popT, tl.loopA + 0.05 ); show.dirty = true; }
 			if( ImGui::MenuItem( L( "Länge der Time Line bis hier" ) ) ) { tl.length = std::max( 1.0, g.popT ); show.dirty = true; }
+			//range over all tracks: the loop range (Shift + drag in the ruler) is the selection
+			if( ImGui::BeginMenu( L( "Bereich (alle Spuren)" ) ) )
+			{
+				const bool has   = tl.loopB - tl.loopA > 0.01;
+				const double len = tl.loopB - tl.loopA;
+				if( has ) ImGui::TextDisabled( "%s - %s", TcStr( tl.loopA, tl.fps ).c_str(), TcStr( tl.loopB, tl.fps ).c_str() );
+				else ImGui::TextDisabled( "%s", L( "Erst Bereich wählen: Shift + Ziehen im Zeitlineal" ) );
+				if( ImGui::MenuItem( L( "Kopieren" ), nullptr, false, has ) )
+				{
+					TlRangeCopy( show, tl.loopA, tl.loopB, g.rangeClip );
+					SetStatus( L( "Bereich kopiert" ) );
+				}
+				if( ImGui::MenuItem( L( "Ausschneiden (Späteres rückt auf)" ), nullptr, false, has ) )
+				{
+					TlRangeCopy( show, tl.loopA, tl.loopB, g.rangeClip );
+					TlDeleteTime( show, tl.loopA, tl.loopB );
+				}
+				if( ImGui::MenuItem( L( "Hierher verschieben" ), nullptr, false, has ) )
+				{
+					const double at = TlRangeMove( show, tl.loopA, tl.loopB, g.popT );
+					tl.loopA        = at;
+					tl.loopB        = at + len;
+				}
+				if( ImGui::MenuItem( L( "Leere Zeit hier einfügen (Länge des Bereichs)" ), nullptr, false, has ) ) TlInsertTime( show, g.popT, len );
+				if( ImGui::MenuItem( L( "Kopierten Bereich hier einfügen (Späteres rückt nach hinten)" ), nullptr, false, !g.rangeClip.Empty() ) ) TlRangePaste( show, g.rangeClip, g.popT );
+				ImGui::Separator();
+				ImGui::TextDisabled( "%s", L( "Gilt für Keys, Clip-Blöcke, Marker und Timecode-Cues.\nDie Audiospur bleibt stehen. Kopieren nimmt keine Cues mit." ) );
+				ImGui::EndMenu();
+			}
 			if( g.popMarker >= 0 && g.popMarker < (int)tl.markers.size() )
 			{
 				ImGui::Separator();
@@ -1417,6 +1565,57 @@ void App::TimelinePanel()
 			for( auto& c : t.clips ) c.sel = false;
 	};
 
+	//sections: a collapsed group / DMX track shows its keys as blocks (move, Ctrl = copy, trim at the edges, S = split)
+	std::map< int, std::vector< TlBlock > > blks;//track index -> blocks
+	for( auto& r : rows )
+		if( r.kind == 0 && !tl.tracks[ r.track ].open && !tl.tracks[ r.track ].lanes.empty() ) TlBlocks( tl, tl.tracks[ r.track ], blks[ r.track ] );
+	auto blockSel = [ & ]( const TlTrack& t, const TlBlock& b ) {
+		for( auto& l : t.lanes )
+			for( auto& k : l.keys )
+				if( k.t >= b.t0 - 1e-9 && k.t <= b.t1 + 1e-9 && !k.sel ) return false;
+		return true;
+	};
+	auto blockX = [ & ]( double t0, double t1, float& xa, float& xb ) {
+		xa = X( t0 ) - 3 * ui;
+		xb = std::max( X( t1 ) + 3 * ui, xa + 8 * ui );
+	};
+	//block under the mouse: index + part (0 body, 1 left edge, 2 right edge)
+	auto blockHit = [ & ]( const Row& r, int& part ) {
+		part    = 0;
+		auto it = blks.find( r.track );
+		if( it == blks.end() ) return -1;
+		for( int i = (int)it->second.size() - 1; i >= 0; --i )
+		{
+			float xa, xb;
+			blockX( it->second[ i ].t0, it->second[ i ].t1, xa, xb );
+			if( M.x < xa || M.x > xb ) continue;
+			if( xb - xa > 18 * ui ) part = M.x < xa + 5 * ui ? 1 : ( M.x > xb - 5 * ui ? 2 : 0 );
+			return i;
+		}
+		return -1;
+	};
+	if( uiTest_ )
+	{
+		UiMark( "tl.area", ImVec2( X0, Y0 ), ImVec2( X1, Y1 ) );
+		for( auto& r : rows )
+		{
+			if( r.kind == 3 ) UiMark( "tl.cliprow." + std::to_string( r.track ), ImVec2( X0, RY( r ) ), ImVec2( X1, RY( r ) + r.h ) );
+			auto it = blks.find( r.track );
+			if( r.kind != 0 || it == blks.end() ) continue;
+			for( int i = 0; i < (int)it->second.size(); ++i )
+			{
+				float xa, xb;
+				blockX( it->second[ i ].t0, it->second[ i ].t1, xa, xb );
+				UiMark( "tl.block." + std::to_string( r.track ) + "." + std::to_string( i ), ImVec2( xa, RY( r ) + 2 * ui ), ImVec2( xb, RY( r ) + r.h - 3 * ui ) );
+			}
+		}
+	}
+	if( curvesHov && g.drag == 0 && hovRow >= 0 && rows[ hovRow ].kind == 0 )
+	{
+		int part;
+		if( blockHit( rows[ hovRow ], part ) >= 0 && part ) ImGui::SetMouseCursor( ImGuiMouseCursor_ResizeEW );
+	}
+
 	//---- mouse down in the curve area
 	if( curvesHov && ImGui::IsMouseClicked( 0 ) && hovRow >= 0 )
 	{
@@ -1508,7 +1707,37 @@ void App::TimelinePanel()
 		else if( r.kind == 0 )
 		{
 			double th;
-			if( summaryHit( r, th ) )
+			int bpart    = 0;
+			const int bi = blockHit( r, bpart );
+			if( bi >= 0 && dbl )
+			{
+				trk.open   = true;//double click: show the curves
+				show.dirty = true;
+			}
+			else if( bi >= 0 )
+			{
+				const std::vector< TlBlock >& bl = blks[ r.track ];
+				const TlBlock b                  = bl[ bi ];
+				if( !blockSel( trk, b ) )
+				{
+					if( !io.KeyCtrl && !io.KeyShift ) ClearSel( tl );
+					for( auto& l : trk.lanes )
+						for( auto& k : l.keys )
+							if( k.t >= b.t0 - 1e-9 && k.t <= b.t1 + 1e-9 ) k.sel = true;
+				}
+				g.blkTrack = trk.uid;
+				g.blkT0    = b.t0;
+				g.blkT1    = b.t1;
+				g.blkLo    = bi > 0 ? bl[ bi - 1 ].t1 + 0.002 : 0;
+				g.blkHi    = bi + 1 < (int)bl.size() ? bl[ bi + 1 ].t0 - 0.002 : 1e18;
+				g.dragT0   = T( M.x );
+				g.drag     = 15 + bpart;
+				g.blkSel.clear();//every selected block (all collapsed tracks) moves along
+				for( auto& e : blks )
+					for( auto& bb : e.second )
+						if( blockSel( tl.tracks[ e.first ], bb ) ) g.blkSel.push_back( { tl.tracks[ e.first ].uid, bb.t0, bb.t1 } );
+			}
+			else if( summaryHit( r, th ) )
 			{
 				//select the keys of all lanes at this time, drag them together
 				if( !io.KeyCtrl && !io.KeyShift ) ClearSel( tl );
@@ -1692,6 +1921,53 @@ void App::TimelinePanel()
 			show.dirty = true;
 		}
 	if( curvesAct && g.drag == 3 ) tl.Locate( show, io.KeyCtrl ? std::max( 0.0, T( M.x ) ) : tl.Snap( std::max( 0.0, T( M.x ) ) ) );
+	//sections: a ghost while dragging, the keys change when the mouse is released (one step, the target is overwritten once)
+	double blkDt = 0, blkX = 0;
+	bool blkValid = false;
+	if( g.drag >= 15 && g.drag <= 17 )
+	{
+		auto sn        = [ & ]( double x ) { return io.KeyAlt ? x : tl.Snap( x ); };
+		const double d = T( M.x ) - g.dragT0;
+		const bool dragged = io.MouseDragMaxDistanceSqr[ 0 ] > 9;
+		const ImU32 gc = IM_COL32( 255, 170, 60, 255 );
+		dl->PushClipRect( ImVec2( X0, Y0 ), ImVec2( X1, Y1 ), true );
+		if( g.drag == 15 )
+		{
+			blkDt     = sn( g.blkT0 + d ) - g.blkT0;
+			double mn = 1e18;
+			for( auto& b : g.blkSel ) mn = std::min( mn, b.t0 );
+			if( mn + blkDt < 0 ) blkDt = -mn;
+			blkValid = dragged && fabs( blkDt ) > 1e-6;
+			if( blkValid )
+				for( auto& b : g.blkSel )
+					for( auto& r : rows )
+						if( r.kind == 0 && tl.tracks[ r.track ].uid == b.track )
+						{
+							float xa, xb;
+							blockX( b.t0 + blkDt, b.t1 + blkDt, xa, xb );
+							dl->AddRectFilled( ImVec2( xa, RY( r ) + 2 * ui ), ImVec2( xb, RY( r ) + r.h - 3 * ui ), IM_COL32( 255, 170, 60, 60 ), 4 * ui );
+							dl->AddRect( ImVec2( xa, RY( r ) + 2 * ui ), ImVec2( xb, RY( r ) + r.h - 3 * ui ), gc, 4 * ui, 0, 2.0f );
+							if( io.KeyCtrl ) dl->AddText( ImVec2( xa + 5 * ui, RY( r ) + ( r.h - lh ) * 0.5f ), gc, "+" );
+						}
+		}
+		else
+		{
+			const bool left = g.drag == 16;
+			blkX            = sn( ( left ? g.blkT0 : g.blkT1 ) + d );
+			blkX            = left ? std::max( g.blkLo, std::min( blkX, g.blkT1 - 0.01 ) ) : std::min( g.blkHi, std::max( blkX, g.blkT0 + 0.01 ) );
+			blkValid        = dragged && fabs( blkX - ( left ? g.blkT0 : g.blkT1 ) ) > 1e-6;
+			for( auto& r : rows )
+				if( r.kind == 0 && tl.tracks[ r.track ].uid == g.blkTrack && blkValid )
+				{
+					float xa, xb;
+					blockX( left ? blkX : g.blkT0, left ? g.blkT1 : blkX, xa, xb );
+					dl->AddRectFilled( ImVec2( xa, RY( r ) + 2 * ui ), ImVec2( xb, RY( r ) + r.h - 3 * ui ), IM_COL32( 255, 170, 60, 60 ), 4 * ui );
+					dl->AddRect( ImVec2( xa, RY( r ) + 2 * ui ), ImVec2( xb, RY( r ) + r.h - 3 * ui ), gc, 4 * ui, 0, 2.0f );
+				}
+			ImGui::SetMouseCursor( ImGuiMouseCursor_ResizeEW );
+		}
+		dl->PopClipRect();
+	}
 	//box select
 	if( g.drag == 2 && curvesAct && ImGui::IsMouseDragging( 0, 3 ) )
 	{
@@ -1715,8 +1991,26 @@ void App::TimelinePanel()
 	if( !ImGui::IsMouseDown( 0 ) && g.drag != 0 )
 	{
 		if( g.drag == 2 && io.MouseDragMaxDistanceSqr[ 0 ] < 9 && M.x >= X0 && M.x < X1 && M.y > Y0 ) tl.Locate( show, tl.Snap( std::max( 0.0, T( g.dragStart.x ) ) ) );
+		if( g.drag == 15 && blkValid )
+		{
+			for( auto& t : tl.tracks )
+			{
+				std::vector< std::pair< double, double > > mv;
+				for( auto& b : g.blkSel )
+					if( b.track == t.uid ) mv.push_back( { b.t0, b.t1 } );
+				if( !mv.empty() ) TlMoveBlocks( tl, t, mv, blkDt, io.KeyCtrl );
+			}
+			show.dirty = true;
+		}
+		if( ( g.drag == 16 || g.drag == 17 ) && blkValid )
+			if( TlTrack* t = tl.Find( g.blkTrack ) )
+			{
+				TlTrimBlock( tl, *t, g.blkT0, g.blkT1, g.drag == 16, blkX );
+				show.dirty = true;
+			}
 		g.drag = 0;
 		g.orig.clear();
+		g.blkSel.clear();
 	}
 	//right click in the curve area
 	if( curvesHov && ImGui::IsMouseClicked( 1 ) && hovRow >= 0 )
@@ -1747,7 +2041,25 @@ void App::TimelinePanel()
 					break;
 				}
 		}
-		if( r.kind == 3 )
+		int bpartR    = 0;
+		const int biR = r.kind == 0 ? blockHit( r, bpartR ) : -1;
+		if( biR >= 0 )
+		{
+			TlTrack& bt     = tl.tracks[ r.track ];
+			const TlBlock b = blks[ r.track ][ biR ];
+			if( !blockSel( bt, b ) )
+			{
+				ClearSel( tl );
+				for( auto& l : bt.lanes )
+					for( auto& k : l.keys )
+						if( k.t >= b.t0 - 1e-9 && k.t <= b.t1 + 1e-9 ) k.sel = true;
+			}
+			g.blkTrack = bt.uid;
+			g.blkT0    = b.t0;
+			g.blkT1    = b.t1;
+			ImGui::OpenPopup( "##tlblockctx" );
+		}
+		else if( r.kind == 3 )
 		{
 			int part;
 			g.clipIdx = clipHit( r, part );
@@ -1907,6 +2219,20 @@ void App::TimelinePanel()
 					anySel = anySel || k.sel;
 				}
 			(void)ts;
+			//collapsed: the keys as blocks (sections)
+			{
+				auto bi = blks.find( r.track );
+				if( bi != blks.end() )
+					for( auto& b : bi->second )
+					{
+						float xa, xb;
+						blockX( b.t0, b.t1, xa, xb );
+						if( xb < X0 || xa > X1 ) continue;
+						const bool bs = blockSel( trk, b );
+						dl->AddRectFilled( ImVec2( xa, y + 2 * ui ), ImVec2( xb, y + r.h - 3 * ui ), ColU( trk.color, trk.mute ? 0.12f : ( bs ? 0.38f : 0.24f ) ), 4 * ui );
+						dl->AddRect( ImVec2( xa, y + 2 * ui ), ImVec2( xb, y + r.h - 3 * ui ), bs ? kSelC : ColU( trk.color, trk.mute ? 0.4f : 0.85f ), 4 * ui, 0, bs ? 2.0f : 1.0f );
+					}
+			}
 			//one thin row per timelane (its colour), so every diamond can be traced to its lane
 			const int nl    = std::max( 1, (int)trk.lanes.size() );
 			const float pad = 3 * ui, rowH = ( r.h - 2 * pad ) / nl;
@@ -2342,6 +2668,21 @@ void App::TimelinePanel()
 				show.dirty = true;
 				SetStatus( L( "Keys gesetzt: " ) + t->name + "  " + TcStr( rt.pos, tl.fps ) );
 			}
+		//S: split the section under the playhead (collapsed tracks: the selected track and tracks with a selection)
+		if( ImGui::IsKeyPressed( ImGuiKey_S, false ) && !io.KeyCtrl )
+		{
+			int n = 0;
+			for( auto& t : tl.tracks )
+			{
+				if( t.open || t.lanes.empty() ) continue;
+				bool use = t.uid == g.selTrack;
+				for( auto& l : t.lanes )
+					for( auto& k : l.keys ) use = use || k.sel;
+				if( use && TlSplitBlock( tl, t, rt.pos ) ) ++n;
+			}
+			if( n ) show.dirty = true;
+			SetStatus( n ? std::string( L( "Abschnitt geteilt: " ) ) + TcStr( rt.pos, tl.fps ) : std::string( L( "Teilen (S): Abspielposition in einen Abschnitt einer eingeklappten Spur stellen" ) ) );
+		}
 		//copy / paste selected keys (paste at the playhead)
 		if( io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_C, false ) && CountSel( tl ) )
 		{
@@ -2705,6 +3046,42 @@ void App::TimelinePanel()
 				ImGui::PopID();
 			}
 			ImGui::EndMenu();
+		}
+		ImGui::EndPopup();
+	}
+	if( ImGui::BeginPopup( "##tlblockctx" ) )
+	{
+		if( TlTrack* t = tl.Find( g.blkTrack ) )
+		{
+			ImGui::TextDisabled( L( "Abschnitt  %s - %s" ), TcStr( g.blkT0, tl.fps ).c_str(), TcStr( g.blkT1, tl.fps ).c_str() );
+			auto inside = [ & ]( double x ) { return x > g.blkT0 + 0.003 && x < g.blkT1 - 0.002; };
+			if( ImGui::MenuItem( L( "Hier teilen" ), nullptr, false, inside( g.popT ) ) ) { TlSplitBlock( tl, *t, g.popT ); show.dirty = true; }
+			if( ImGui::MenuItem( L( "An der Abspielposition teilen" ), "S", false, inside( rt.pos ) ) ) { TlSplitBlock( tl, *t, rt.pos ); show.dirty = true; }
+			if( ImGui::MenuItem( L( "Mit dem nächsten Abschnitt verbinden" ) ) )
+			{
+				if( !TlJoinBlocks( tl, *t, g.blkT1 ) ) SetStatus( L( "Nichts zu verbinden: die Pause dahinter ist länger als 2 Takte" ) );
+				show.dirty = true;
+			}
+			ImGui::Separator();
+			if( ImGui::MenuItem( L( "Duplizieren (dahinter)" ) ) )
+			{
+				const double len = g.blkT1 - g.blkT0, gs = tl.GridStep();
+				double dt        = gs > 0 ? ceil( ( len + 1e-6 ) / gs ) * gs : len + 0.05;
+				if( dt <= len + 1e-6 ) dt += gs > 0 ? gs : 0.05;
+				TlMoveBlocks( tl, *t, { { g.blkT0, g.blkT1 } }, dt, true );
+				tl.length  = std::max( tl.length, g.blkT1 + dt );
+				show.dirty = true;
+			}
+			if( ImGui::MenuItem( L( "Löschen" ), "Entf" ) )
+			{
+				for( auto& l : t->lanes ) l.keys.erase( std::remove_if( l.keys.begin(), l.keys.end(), [ & ]( const TlKey& k ) { return k.t >= g.blkT0 - 1e-9 && k.t <= g.blkT1 + 1e-9; } ), l.keys.end() );
+				show.dirty = true;
+			}
+			ImGui::Separator();
+			if( ImGui::MenuItem( L( "Abspielposition an den Anfang" ) ) ) tl.Locate( show, g.blkT0 );
+			if( ImGui::MenuItem( L( "Spur aufklappen (Kurven zeigen)" ) ) ) { t->open = true; show.dirty = true; }
+			ImGui::Separator();
+			ImGui::TextDisabled( "%s", L( "Ziehen = verschieben, Strg = kopieren, Kante ziehen = beschneiden, Alt = ohne Raster" ) );
 		}
 		ImGui::EndPopup();
 	}

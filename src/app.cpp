@@ -14,6 +14,7 @@
 
 namespace ls
 {
+static const char* QualityName( int q ) { return q <= 0 ? L( "Entwurf" ) : q == 1 ? L( "Normal" ) : L( "Hoch" ); }
 //---------------------------------------------------------------- file dialogs
 static std::string FileDialog( void* hwnd, bool save, const wchar_t* filter, const wchar_t* defExt, const std::string& initial = "" )
 {
@@ -54,8 +55,8 @@ bool App::Init( void* wnd, std::string* err )
 	if( !ren.Init( err ) ) return false;
 	midi.Open();
 	ports_ = ListComPorts();
-	//start with the demo show (or the last one, if passed on the command line by main)
-	BuildDemo();
+	//start with the demo show (2.1: the jazz club; main may replace it by a file or --demo)
+	BuildJazzDemo();
 	io.Start( &show );
 	return true;
 }
@@ -208,6 +209,20 @@ void App::DropFile( const std::string& path )
 		}
 		else
 			SetStatus( L( "GDTF-Fehler: " ) + lib.lastError );
+	}
+	else if( ends( ".wav" ) || ends( ".mp3" ) || ends( ".aif" ) || ends( ".aiff" ) || ends( ".m4a" ) || ends( ".aac" ) || ends( ".flac" ) || ends( ".wma" ) )
+	{
+		//audio file: audio track of the Time Line. Dropped onto the time area = starts at the mouse (grid), else at 0 / where it was
+		double off = -1;
+		POINT pt{};
+		bool have = dropPt_;
+		if( have ) { pt.x = (LONG)dropX_; pt.y = (LONG)dropY_; }
+		else have = hwnd && GetCursorPos( &pt ) && ScreenToClient( (HWND)hwnd, &pt );
+		if( have && ImGui::GetFrameCount() - tlGeo_.frame <= 2 && tlGeo_.pps > 0 && pt.x >= tlGeo_.x0 && pt.x < tlGeo_.x1 && pt.y >= tlGeo_.y0 && pt.y < tlGeo_.y1 )
+			off = std::max( 0.0, show.tl.Snap( tlGeo_.view0 + ( pt.x - tlGeo_.x0 ) / tlGeo_.pps ) );
+		const bool added = AddAudioTrack( path, off );
+		tlSelectTab_     = true;
+		SetStatus( std::string( added ? L( "Audiospur angelegt: " ) : L( "Audiodatei der Audiospur ersetzt: " ) ) + FileStem( path ) );
 	}
 	else if( ends( ".mp4" ) || ends( ".mov" ) || ends( ".m4v" ) || ends( ".wmv" ) || ends( ".avi" ) || ends( ".mkv" ) )
 	{
@@ -422,6 +437,7 @@ void App::DeleteSelected()
 void App::Frame( float dt )
 {
 	fps = fps * 0.95f + ( dt > 0 ? 1.0f / dt : 0 ) * 0.05f;
+	QualityTick( dt );
 	//the UI owns the show while it builds the frame; the engine thread waits (rendering releases it)
 	std::unique_lock< std::recursive_mutex > frameLk( engineLock_ );
 	struct ClearPtr
@@ -532,12 +548,14 @@ void App::Frame( float dt )
 	ImGui::SetNextWindowSize( vp->WorkSize );
 	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( edge, edge * 0.75f ) );
 	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 0 );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0 );
 	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 0, 0 ) );
 	ImGui::Begin( "##host", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav );
 	//the host never scrolls (keyboard navigation / rounding could shift the whole layout off screen)
 	ImGui::SetScrollX( 0 );
 	ImGui::SetScrollY( 0 );
-	float W = floorf( ImGui::GetContentRegionAvail().x ), H = floorf( ImGui::GetContentRegionAvail().y ) - 1;
+	const float sbH = floorf( ImGui::GetFrameHeight() * 0.95f );//2.1 status bar
+	float W = floorf( ImGui::GetContentRegionAvail().x ), H = floorf( ImGui::GetContentRegionAvail().y ) - 1 - sbH - floorf( 3.0f * ui );
 	const float sp = floorf( 5.0f * ui );
 	if( !uiScaled_ )
 	{
@@ -581,9 +599,13 @@ void App::Frame( float dt )
 	ImGui::PopStyleVar( 2 );
 	PanelBottom();
 	ImGui::EndChild();
+	ImGui::Dummy( ImVec2( 1, floorf( 3.0f * ui ) ) );
+	ImGui::BeginChild( "statusbar", ImVec2( W, sbH ), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav );
+	StatusBar();
+	ImGui::EndChild();
 	ImGui::PopStyleVar();
 	ImGui::End();
-	ImGui::PopStyleVar( 2 );
+	ImGui::PopStyleVar( 3 );
 	LibraryPopup();
 	PerfWindow();
 	FixtureEditor();
@@ -969,8 +991,15 @@ void App::Splitter( bool vertical, float* size, float minv, float maxv, float si
 		float d = vertical ? ImGui::GetIO().MouseDelta.x : ImGui::GetIO().MouseDelta.y;
 		*size   = Clamp( *size + d * sign, minv, maxv );
 	}
-	ImU32 col = act ? IM_COL32( 90, 140, 220, 255 ) : ( hov ? IM_COL32( 70, 90, 120, 255 ) : IM_COL32( 22, 24, 30, 255 ) );
-	ImGui::GetWindowDrawList()->AddRectFilled( ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), col );
+	if( hov || act )
+	{
+		//fine accent line in the middle of the gap (the gap itself stays empty: panels read as cards)
+		const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+		const float t  = std::max( 1.0f, floorf( 2.0f * ui ) );
+		const ImU32 col = act ? IM_COL32( 90, 165, 255, 255 ) : IM_COL32( 90, 165, 255, 130 );
+		if( vertical ) ImGui::GetWindowDrawList()->AddRectFilled( ImVec2( floorf( ( a.x + b.x - t ) * 0.5f ), a.y + 6 * ui ), ImVec2( floorf( ( a.x + b.x - t ) * 0.5f ) + t, b.y - 6 * ui ), col, t );
+		else ImGui::GetWindowDrawList()->AddRectFilled( ImVec2( a.x + 6 * ui, floorf( ( a.y + b.y - t ) * 0.5f ) ), ImVec2( b.x - 6 * ui, floorf( ( a.y + b.y - t ) * 0.5f ) + t ), col, t );
+	}
 	ImGui::PopID();
 }
 
@@ -997,7 +1026,8 @@ void App::Menu()
 			if( !p.empty() ) SaveShow( p );
 		}
 		ImGui::Separator();
-		if( ImGui::MenuItem( L( "Demo-Show laden" ) ) && ConfirmClose() ) BuildDemo();
+		if( ImGui::MenuItem( L( "Demo-Show laden (Jazzclub)" ) ) && ConfirmClose() ) BuildJazzDemo();
+		if( ImGui::MenuItem( L( "Demo-Show laden (Konzertbühne)" ) ) && ConfirmClose() ) BuildDemo();
 		if( ImGui::MenuItem( L( "3D-Modell importieren..." ) ) )
 		{
 			std::string p = FileDialog( hwnd, false, kModelFilter, L"glb" );
@@ -1086,7 +1116,7 @@ void App::Menu()
 	}
 	if( ImGui::BeginMenu( L( "Hilfe" ) ) )
 	{
-		ImGui::TextDisabled( "Grosserd LightStage 2.0 - DMX 3D Visualizer" );
+		ImGui::TextDisabled( "Grosserd LightStage 2.1 - DMX 3D Visualizer" );
 		ImGui::Separator();
 		ImGui::TextUnformatted( L( "Viewport: Linke Maus ziehen = drehen, Shift/Mitte = verschieben, Rad = Zoom" ) );
 		ImGui::TextUnformatted( L( "Klick = Lampe wählen, Ctrl = mehrere, Doppelklick = zentrieren" ) );
@@ -1095,19 +1125,6 @@ void App::Menu()
 		ImGui::TextUnformatted( L( "Dateien (Show, GDTF, Modelle) per Drag&Drop ins Fenster ziehen" ) );
 		ImGui::EndMenu();
 	}
-	//right side: status
-	float x = ImGui::GetWindowWidth();
-	char buf[ 200 ];
-	snprintf( buf, sizeof( buf ), "%s%s   DMX out %.0f/s  in %.0f/s   %.0f fps", show.path.empty() ? L( "Unbenannt" ) : FileStem( show.path ).c_str(), show.dirty ? " *" : "", sentRate_, recvRate_, fps );
-	float tw = ImGui::CalcTextSize( buf ).x;
-	if( !status.empty() && Now() - statusTime < 6.0 )
-	{
-		float sw = ImGui::CalcTextSize( status.c_str() ).x;
-		ImGui::SameLine( x - tw - sw - 54 * ui );
-		ImGui::TextColored( ImVec4( 1.0f, 0.8f, 0.35f, 1 ), "%s", status.c_str() );
-	}
-	ImGui::SameLine( x - tw - 20 * ui );
-	ImGui::TextDisabled( "%s", buf );
 	ImGui::EndMainMenuBar();
 }
 
@@ -1144,6 +1161,8 @@ void App::PanelPatch()
 		ImGui::TableSetupColumn( L( "U.Adr" ), ImGuiTableColumnFlags_WidthFixed, 52 * ui );
 		ImGui::TableSetupColumn( "Ch", ImGuiTableColumnFlags_WidthFixed, 26 * ui );
 		ImGui::TableHeadersRow();
+		int mvId = 0, mvAnchor = 0;//drag & drop: lamp dragged, dropped on this lamp
+		bool mvAfter = false;
 		for( auto& f : show.fixtures )
 		{
 			ImGui::TableNextRow();
@@ -1156,6 +1175,40 @@ void App::PanelPatch()
 			{
 				Select( f.id, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift );
 				if( ImGui::IsMouseDoubleClicked( 0 ) ) FrameSelection();
+			}
+			//drag & drop: reorder the list, the DMX addresses follow the new order
+			if( ImGui::BeginDragDropSource() )
+			{
+				const int id = f.id;
+				ImGui::SetDragDropPayload( "LS_FIXTURE", &id, sizeof( id ) );
+				const int n = IsSel( f.id ) ? (int)sel.size() : 1;
+				if( n > 1 ) ImGui::Text( L( "%d Lampen verschieben" ), n );
+				else ImGui::Text( "%s", f.name.c_str() );
+				ImGui::TextDisabled( "%s", L( "Adressen folgen der neuen Reihenfolge" ) );
+				ImGui::EndDragDropSource();
+			}
+			if( ImGui::BeginDragDropTarget() )
+			{
+				const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+				const bool after = ImGui::GetIO().MousePos.y > ( mn.y + mx.y ) * 0.5f;
+				if( const ImGuiPayload* pl = ImGui::AcceptDragDropPayload( "LS_FIXTURE", ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect ) )
+				{
+					const int dragged = *(const int*)pl->Data;
+					const bool same   = dragged == f.id || ( IsSel( dragged ) && IsSel( f.id ) );
+					if( !same )
+					{
+						const float y  = after ? mx.y : mn.y;
+						const float x1 = ImGui::GetWindowPos().x + ImGui::GetWindowWidth();
+						ImGui::GetForegroundDrawList()->AddLine( ImVec2( mn.x, y ), ImVec2( x1, y ), IM_COL32( 255, 170, 60, 255 ), 2.5f );
+						if( pl->IsDelivery() )
+						{
+							mvId     = dragged;
+							mvAnchor = f.id;
+							mvAfter  = after;
+						}
+					}
+				}
+				ImGui::EndDragDropTarget();
 			}
 			if( ImGui::BeginPopupContextItem( "fctx" ) )
 			{
@@ -1195,6 +1248,7 @@ void App::PanelPatch()
 			ImGui::PopID();
 		}
 		ImGui::EndTable();
+		if( mvId ) MoveFixturesUi( mvId, mvAnchor, mvAfter );
 	}
 	ImGui::Dummy( ImVec2( 0, 6 ) );
 	//universes
@@ -1575,10 +1629,39 @@ bool App::LbxStart( const std::string& path )
 	lbx_.started = Now();
 	return true;
 }
+//PATCH list drag & drop: the selection (or the dragged lamp alone) moves in front of / behind the anchor
+bool App::MoveFixturesUi( int dragged, int anchorId, bool after )
+{
+	std::vector< int > ids;
+	if( IsSel( dragged ) )
+	{
+		for( auto& f : show.fixtures )
+			if( IsSel( f.id ) ) ids.push_back( f.id );
+	}
+	else ids.push_back( dragged );
+	undoTouched_ = true;
+	std::map< int64_t, int64_t > rm;
+	std::string why;
+	if( !show.MoveFixtures( ids, anchorId, after, &why, &rm ) )
+	{
+		SetStatus( L( "Verschieben nicht möglich: kein Platz in " ) + why );
+		return false;
+	}
+	bridge.RemapChannels( rm );
+	int lamps = 0;
+	for( auto& f : show.fixtures )
+		for( auto& kv : rm )
+			if( kv.second / 1000 == f.universe && kv.second % 1000 == f.address ) { ++lamps; break; }
+	char b[ 160 ];
+	snprintf( b, sizeof( b ), L( "Reihenfolge geändert: %d Lampe(n) neu adressiert" ), lamps );
+	SetStatus( b );
+	return true;
+}
 void App::LbxEnd( bool ok )
 {
 	if( !lbx_.active ) return;
 	const bool done = LbxFinish( show, lbx_, ok );
+	if( lbxUiState == 1 ) lbxUiState = 2;
 	fxT_ = 0;//effects: no jump after the export time
 	if( lbxEngineWas_ ) StartEngine();
 	if( done )
@@ -1592,6 +1675,12 @@ void App::LbxEnd( bool ok )
 }
 void App::LbxWindow()
 {
+	if( !lbxUiTest.empty() && lbxUiState == 0 && engineRun_ && ++lbxUiWait_ > 60 )
+	{
+		Log( "lightshow ui test: start (engine running)" );
+		lbxUiState = LbxStart( lbxUiTest ) ? 1 : 3;
+		Log( "lightshow ui test: LbxStart returned, state %d", lbxUiState );
+	}
 	if( !lbxWin_ && !lbx_.active ) return;
 	ImGui::SetNextWindowSize( ImVec2( 470 * ui, 0 ), ImGuiCond_Appearing );
 	bool open = true;
@@ -1602,9 +1691,10 @@ void App::LbxWindow()
 	}
 	if( lbx_.active )
 	{
-		const float k = (float)lbx_.frame / std::max( 1, lbx_.frames );
+		const float k = (float)lbx_.Work() / std::max( 1, lbx_.WorkTotal() );
 		char ov[ 64 ];
-		snprintf( ov, sizeof( ov ), "%d / %d", lbx_.frame, lbx_.frames );
+		if( lbx_.layer < 0 ) snprintf( ov, sizeof( ov ), "%d / %d", lbx_.frame, lbx_.frames );
+		else snprintf( ov, sizeof( ov ), L( "Effekt-Ebene %d / %d" ), lbx_.layer + 1, (int)lbx_.layers.size() );
 		ImGui::ProgressBar( k, ImVec2( 420 * ui, 0 ), ov );
 		ImGui::TextDisabled( L( "Die Show wird Bild für Bild berechnet (unabhängig von der echten Zeit)." ) );
 		if( ImGui::Button( L( "Abbrechen" ) ) )
@@ -2005,28 +2095,20 @@ void App::PanelViewport()
 		if( x + w > tbRight ) ImGui::SetCursorScreenPos( ImVec2( tbLeft, tbMaxY + 4 * ui ) );//next row (no SameLine: it would keep the row's y)
 		else ImGui::SameLine( 0, gap );
 	};
-	auto cbW = [ & ]( const char* l ) { return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize( l, nullptr, true ).x; };
 	ImGui::SetCursorScreenPos( ImVec2( p0.x + 14, p0.y + 11 ) );
 	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 8, 4 ) );
 	ImGui::PushStyleVar( ImGuiStyleVar_GrabMinSize, 4.0f );
-	ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 0.16f, 0.18f, 0.22f, 1.0f ) );
-	ImGui::PushStyleColor( ImGuiCol_FrameBgHovered, ImVec4( 0.21f, 0.23f, 0.28f, 1.0f ) );
-	ImGui::PushStyleColor( ImGuiCol_FrameBgActive, ImVec4( 0.24f, 0.27f, 0.33f, 1.0f ) );
+	ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 1, 1, 1, 0.075f ) );
+	ImGui::PushStyleColor( ImGuiCol_FrameBgHovered, ImVec4( 1, 1, 1, 0.12f ) );
+	ImGui::PushStyleColor( ImGuiCol_FrameBgActive, ImVec4( 1, 1, 1, 0.16f ) );
 	ImGui::PushStyleColor( ImGuiCol_SliderGrab, ImVec4( 0.45f, 0.70f, 1.0f, 0.9f ) );
-	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.08f, 0.09f, 0.12f, 0.8f ) );
-	ImGui::SetNextItemWidth( 130 * ui );
-	ls::rs::SliderFloat( "##haze", &show.stage.haze, 0, 1, "Haze %.2f" );
-	if( ImGui::IsItemEdited() ) show.dirty = true;
-	LearnHook( [ & ] { MidiMap m; m.target = MidiTarget::Haze; return m; }() );
-	if( !learn_ ) OscContext( "/ls/haze" );
-	Flow( 130 * ui + ImGui::GetFrameHeight() + 2 * ui );
-	ImGui::SetNextItemWidth( 130 * ui );
-	if( ls::rs::SliderFloat( "##env", &show.stage.envLight, 0, 4, L( "Umgebung %.2f" ), ImGuiSliderFlags_Logarithmic ) ) show.dirty = true;
-	ImGui::SetItemTooltip( L( "Umgebungslicht (Raum, Boden, Himmel) - unabhängig von den Scheinwerfern" ) );
-	OscContext( "/ls/stage/envlight" );
-	Flow( ImGui::GetFrameHeight(), 2 * ui );
-	if( ImGui::ColorEdit3( "##envcol", &show.stage.ambientColor.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel ) ) show.dirty = true;
-	ImGui::SetItemTooltip( L( "Farbe des Umgebungslichts" ) );
+	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 1, 1, 1, 0.075f ) );
+	//switches as chips (pill buttons): lit = on. Smaller than check boxes, so the stage stays visible
+	auto chipW = [ & ]( const char* l ) { return ls::ChipWidth( l ); };
+	auto Chip  = [ & ]( const char* l, bool* v, ImVec4 on = ImVec4( 0.35f, 0.65f, 1.0f, 1 ) ) { return ls::Chip( l, v, on ); };
+	//fold: only master + LIVE stay (more stage, e.g. while programming the Time Line)
+	if( ImGui::ArrowButton( "##vpfold", vpBarFold_ ? ImGuiDir_Right : ImGuiDir_Left ) ) { vpBarFold_ = !vpBarFold_; SaveSettings(); }
+	ImGui::SetItemTooltip( L( "Leiste ein-/ausklappen" ) );
 	Flow( 150 * ui );
 	{
 		//master 0..1000 %: up to 100 % like a grand master, above that more light out of every fixture
@@ -2049,6 +2131,22 @@ void App::PanelViewport()
 		}
 		LearnHook( [ & ] { MidiMap m; m.target = MidiTarget::Master; return m; }() );
 	}
+	if( !vpBarFold_ )
+	{
+	Flow( 130 * ui );
+	ImGui::SetNextItemWidth( 130 * ui );
+	ls::rs::SliderFloat( "##haze", &show.stage.haze, 0, 1, "Haze %.2f" );
+	if( ImGui::IsItemEdited() ) show.dirty = true;
+	LearnHook( [ & ] { MidiMap m; m.target = MidiTarget::Haze; return m; }() );
+	if( !learn_ ) OscContext( "/ls/haze" );
+	Flow( 130 * ui + ImGui::GetFrameHeight() + 2 * ui );
+	ImGui::SetNextItemWidth( 130 * ui );
+	if( ls::rs::SliderFloat( "##env", &show.stage.envLight, 0, 4, L( "Umgebung %.2f" ), ImGuiSliderFlags_Logarithmic ) ) show.dirty = true;
+	ImGui::SetItemTooltip( L( "Umgebungslicht (Raum, Boden, Himmel) - unabhängig von den Scheinwerfern" ) );
+	OscContext( "/ls/stage/envlight" );
+	Flow( ImGui::GetFrameHeight(), 2 * ui );
+	if( ImGui::ColorEdit3( "##envcol", &show.stage.ambientColor.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel ) ) show.dirty = true;
+	ImGui::SetItemTooltip( L( "Farbe des Umgebungslichts" ) );
 	Flow( 150 * ui );
 	ImGui::SetNextItemWidth( 150 * ui );
 	ls::rs::SliderFloat( "##exp", &show.stage.exposure, 0.1f, 4, L( "Belichtung %.2f" ) );
@@ -2068,30 +2166,43 @@ void App::PanelViewport()
 		ImGui::SetItemTooltip( "%s", L( "Stärke der Lichtkegel im Dunst: 0 = aus, 100 = normal, bis 200" ) );
 		OscContext( "/ls/stage/beamlevel" );
 	}
-	Flow( cbW( L( "Schatten" ) ) );
-	ImGui::Checkbox( L( "Schatten" ), &show.stage.shadows );
+	Flow( chipW( L( "Schatten" ) ) );
+	if( Chip( L( "Schatten" ), &show.stage.shadows ) ) show.dirty = true;
 	OscContext( "/ls/stage/shadows" );
-	Flow( cbW( L( "Arbeitslicht" ) ) );
+	//2.1 quality level + auto throttling (display only)
+	for( int q = 0; q < 3; ++q )
 	{
-		const bool wl = show.workLight;
-		if( wl ) ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 0.55f, 0.45f, 0.15f, 1 ) );
-		ImGui::Checkbox( L( "Arbeitslicht" ), &show.workLight );
-		if( wl ) ImGui::PopStyleColor();
+		if( q == 0 ) Flow( chipW( QualityName( 0 ) ) + chipW( QualityName( 1 ) ) + chipW( QualityName( 2 ) ) + chipW( "Auto" ) + 3 * ImGui::GetStyle().ItemSpacing.x + 4 * ui );//the group stays on one row
+		else ImGui::SameLine( 0, 2 * ui );
+		bool on = quality_ == q;
+		ImGui::PushID( 9100 + q );
+		if( Chip( QualityName( q ), &on ) ) { quality_ = q; qualityEff_ = q; SaveSettings(); }
+		ImGui::PopID();
+		UiMark( std::string( "vp.quality" ) + std::to_string( q ), ImGui::GetItemRectMin(), ImGui::GetItemRectMax() );
+		ImGui::SetItemTooltip( "%s", L( "Darstellungsqualität: Entwurf (schnell, ohne Schatten/Glow), Normal (wie bisher),\nHoch (Bodenspiegelungen, Kontaktschatten, weiche Schatten, feinere Lichtkegel).\nNur Anzeige - DMX bleibt unverändert, der Video-Export rechnet immer in Hoch." ) );
+	}
+	ImGui::SameLine();
+	if( Chip( "Auto", &qualityAuto_ ) ) { qualityEff_ = quality_; SaveSettings(); }
+	ImGui::SetItemTooltip( "%s", L( "Bei niedriger Bildrate automatisch eine Stufe herunter, danach wieder hoch" ) );
+	Flow( chipW( L( "Arbeitslicht" ) ) );
+	{
+		Chip( L( "Arbeitslicht" ), &show.workLight, ImVec4( 1.0f, 0.78f, 0.25f, 1 ) );
 		ImGui::SetItemTooltip( L( "Alles hell sehen, auch ohne Scheinwerfer (Taste L). Nur Anzeige, DMX bleibt unverändert." ) );
 		OscContext( "/ls/worklight" );
 	}
-	Flow( cbW( L( "Nr." ) ) );
-	ImGui::Checkbox( L( "Nr." ), &showLabels );
+	Flow( chipW( L( "Nr." ) ) );
+	Chip( L( "Nr." ), &showLabels );
 	if( !show.projectors.empty() )
 	{
-		Flow( cbW( L( "Proj.-Linien" ) ) );
-		if( ImGui::Checkbox( L( "Proj.-Linien" ), &ren.projLines ) ) SaveSettings();
+		Flow( chipW( L( "Proj.-Linien" ) ) );
+		if( Chip( L( "Proj.-Linien" ), &ren.projLines ) ) SaveSettings();
 		ImGui::SetItemTooltip( L( "Umrisslinien der Projektor-Lichtkegel ein/aus" ) );
 	}
-	Flow( cbW( L( "Demo-Bewegung" ) ) );
-	ImGui::Checkbox( L( "Demo-Bewegung" ), &demoFx );
+	Flow( chipW( L( "Demo-Bewegung" ) ) );
+	Chip( L( "Demo-Bewegung" ), &demoFx );
+	}
 	Flow( ImGui::CalcTextSize( "LIVE" ).x + ImGui::GetStyle().FramePadding.x * 2 );
-	ImGui::PushStyleColor( ImGuiCol_Button, perfMode_ ? ImVec4( 0.8f, 0.15f, 0.12f, 1 ) : ImVec4( 0.16f, 0.18f, 0.22f, 1 ) );
+	ImGui::PushStyleColor( ImGuiCol_Button, perfMode_ ? ImVec4( 0.8f, 0.15f, 0.12f, 1 ) : ImVec4( 1, 1, 1, 0.075f ) );
 	if( ImGui::Button( "LIVE" ) ) SetPerfMode( !perfMode_ );
 	ImGui::PopStyleColor();
 	ImGui::SetItemTooltip( L( "Performance-Modus (F12): Eingaben sofort zu DMX, Anzeige gedrosselt. Rechtsklick: Einstellungen" ) );
@@ -2100,8 +2211,8 @@ void App::PanelViewport()
 	ImGui::PopStyleColor( 5 );
 	ImGui::PopStyleVar( 2 );
 	dl->ChannelsSetCurrent( 0 );
-	dl->AddRectFilled( ImVec2( p0.x + 6, p0.y + 5 ), ImVec2( tbMaxX + 8, tbMaxY + 6 ), IM_COL32( 9, 11, 15, 215 ), 8 );
-	dl->AddRect( ImVec2( p0.x + 6, p0.y + 5 ), ImVec2( tbMaxX + 8, tbMaxY + 6 ), IM_COL32( 255, 255, 255, 22 ), 8 );
+	dl->AddRectFilled( ImVec2( p0.x + 6, p0.y + 5 ), ImVec2( tbMaxX + 8, tbMaxY + 6 ), IM_COL32( 10, 12, 17, 190 ), 10 * ui );
+	dl->AddRect( ImVec2( p0.x + 6, p0.y + 5 ), ImVec2( tbMaxX + 8, tbMaxY + 6 ), IM_COL32( 255, 255, 255, 26 ), 10 * ui );
 	dl->ChannelsMerge();
 	if( showStats_ )
 	{
@@ -2190,7 +2301,7 @@ void App::BridgeListenerUpdate()
 	if( !show.output.oscIn ) show.output.oscIn = true;
 	if( bridge.Failed() )//port busy (found in the background thread): retry later
 	{
-		SetStatus( L( "Ableton-Bridge: " ) + bridge.error );
+		SetStatus( L( "Bridge: " ) + bridge.error );
 		bridge.Stop();
 		retryAt = Now() + 3.0;
 	}
@@ -2200,7 +2311,7 @@ void App::BridgeListenerUpdate()
 		if( !bridge.Start( bridgeHttpPort, &err ) )
 		{
 			retryAt = Now() + 3.0;
-			SetStatus( L( "Ableton-Bridge: " ) + err );
+			SetStatus( L( "Bridge: " ) + err );
 		}
 	}
 }
@@ -2237,7 +2348,15 @@ void App::StopEngine()
 	if( !engineRun_ ) return;
 	engineRun_ = false;
 	SetEvent( (HANDLE)engineEvent_ );
-	if( engine_.joinable() ) engine_.join();
+	if( engine_.joinable() )
+	{
+		//called from Frame (export start): the UI holds engineLock_ and the engine thread may be waiting for it -
+		//release it while joining, otherwise both wait for each other forever
+		const bool rel = frameLock_ && frameLock_->owns_lock();
+		if( rel ) frameLock_->unlock();
+		engine_.join();
+		if( rel ) frameLock_->lock();
+	}
 	midi.wake = nullptr;
 	osc.wake  = nullptr;
 	CloseHandle( (HANDLE)engineEvent_ );
@@ -2307,16 +2426,7 @@ void App::SetPerfMode( bool on )
 {
 	const bool changed = on != perfMode_;
 	perfMode_          = on;
-	Renderer::Quality q;
-	if( on && perfView_ == 1 )
-	{
-		q.shadows     = false;
-		q.bloom       = false;
-		q.glow        = false;
-		q.projHaze    = false;
-		q.beamQuality = 0.35f;
-	}
-	ren.quality  = q;
+	ApplyQuality();
 	engineBoost_ = on;
 	io.boost     = on;
 	SetPriorityClass( GetCurrentProcess(), on ? ABOVE_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS );
@@ -2333,6 +2443,166 @@ void App::SetPerfMode( bool on )
 		if( io.boost ) io.ClearLatency();
 	}
 	SaveSettings();
+}
+//2.1 quality levels: normal = the look of 2.0 (no limits), high = extras (screen-space reflections, ambient
+//occlusion, soft 1024 px shadows, GGX highlights, finer haze cones), draft = no shadows / bloom / glow /
+//projector haze and few steps (= the live "reduced view"). The performance mode's reduced view limits on top;
+//a video export always renders high.
+void App::ApplyQuality()
+{
+	Renderer::Quality q;
+	auto limit = [ & ]( float beam, bool fx ) {
+		q.beamQuality = q.beamQuality > 0 ? std::min( q.beamQuality, beam ) : beam;
+		if( !fx ) q.shadows = q.bloom = q.glow = q.projHaze = false;
+	};
+	if( exp_.active ) q.high = true;
+	else
+	{
+		if( perfMode_ && perfView_ == 1 ) limit( 0.35f, false );
+		const int lv = std::min( quality_, qualityAuto_ ? qualityEff_ : quality_ );
+		if( lv == 2 && !( perfMode_ && perfView_ == 1 ) ) q.high = true;
+		if( lv == 0 ) limit( 0.35f, false );
+	}
+	ren.quality = q;
+}
+void App::QualityTick( float dt )
+{
+	quality_ = Clamp( quality_, 0, 2 );
+	if( !qualityAuto_ || perfMode_ || exp_.active || uiTest_ || noAutosave ) { qualityEff_ = quality_; qLow_ = qHigh_ = 0; }
+	else
+	{
+		qualityEff_ = std::min( qualityEff_, quality_ );
+		qLow_       = fps < 28 ? qLow_ + dt : 0;
+		qHigh_      = fps > 50 ? qHigh_ + dt : 0;
+		if( qLow_ > 2.0f && qualityEff_ > 0 )
+		{
+			--qualityEff_;
+			qLow_ = qHigh_ = 0;
+			SetStatus( std::string( L( "Bildrate niedrig - Qualität automatisch: " ) ) + ( qualityEff_ == 1 ? L( "Normal" ) : L( "Entwurf" ) ) );
+		}
+		if( qHigh_ > 8.0f && qualityEff_ < quality_ ) { ++qualityEff_; qLow_ = qHigh_ = 0; }
+	}
+	ApplyQuality();
+}
+
+//2.1 status bar: DMX output, Time Line sync, engine, inputs, quality, messages, show
+void App::StatusBar()
+{
+	ImDrawList* dl = ImGui::GetWindowDrawList();
+	const float h  = ImGui::GetContentRegionAvail().y;
+	const float r  = floorf( 3.5f * ui );
+	const ImU32 cGreen = IM_COL32( 110, 220, 140, 255 ), cRed = IM_COL32( 255, 95, 85, 255 ), cOrange = IM_COL32( 255, 170, 70, 255 ), cGrey = IM_COL32( 120, 125, 135, 255 ), cBlue = IM_COL32( 90, 165, 255, 255 );
+	bool first = true;
+	//one field: dot + text, clickable, tooltip; returns clicked
+	auto field = [ & ]( const char* id, ImU32 dot, const std::string& text, const char* tip ) {
+		if( !first ) { ImGui::SameLine( 0, 0 ); ImGui::Dummy( ImVec2( 14 * ui, h ) ); ImGui::SameLine( 0, 0 ); }
+		first = false;
+		const ImVec2 ts = ImGui::CalcTextSize( text.c_str() );
+		const float w   = ( dot ? 2 * r + 6 * ui : 0 ) + ts.x + 8 * ui;
+		const ImVec2 p  = ImGui::GetCursorScreenPos();
+		const bool cl   = ImGui::InvisibleButton( id, ImVec2( w, h ) );
+		const bool hov  = ImGui::IsItemHovered();
+		if( hov ) dl->AddRectFilled( p, ImVec2( p.x + w, p.y + h ), IM_COL32( 255, 255, 255, 16 ), 3 * ui );
+		float x = p.x + 4 * ui;
+		if( dot )
+		{
+			dl->AddCircleFilled( ImVec2( x + r, p.y + h * 0.5f ), r, dot );
+			x += 2 * r + 6 * ui;
+		}
+		dl->AddText( ImVec2( x, p.y + ( h - ts.y ) * 0.5f ), hov ? IM_COL32( 230, 235, 245, 255 ) : IM_COL32( 165, 172, 185, 255 ), text.c_str() );
+		if( tip && hov ) ImGui::SetTooltip( "%s", tip );
+		UiMark( std::string( "status." ) + ( id + 2 ), p, ImVec2( p.x + w, p.y + h ) );
+		return cl;
+	};
+	char b[ 160 ];
+	//DMX output
+	{
+		const OutputCfg& o = show.output;
+		std::string t = "DMX";
+		if( o.enttec ) t += "  USB";
+		if( o.artnet ) t += "  Art-Net";
+		if( o.sacn ) t += "  sACN";
+		const bool any = o.enttec || o.artnet || o.sacn;
+		if( !any ) t += std::string( "  " ) + L( "aus" );
+		else { snprintf( b, sizeof( b ), "  %.0f/s", sentRate_ ); t += b; }
+		const bool err = o.enttec && !io.enttecOpen;
+		const ImU32 dot = !any ? cGrey : err ? cRed : sentRate_ > 0.5f ? cGreen : cOrange;
+		const std::string tip = io.Status() + "\n" + L( "Klick: Ausgang / Interface" );
+		if( field( "##dmx", dot, t, tip.c_str() ) ) { startTab = "Ausgang"; startTabFrames_ = 0; }
+	}
+	//Time Line
+	{
+		const Timeline& tl = show.tl;
+		const TlRuntime& rt = tl.rt;
+		const int ms = (int)( rt.pos * 1000.0 );
+		snprintf( b, sizeof( b ), "%s %d:%02d.%d", rt.playing ? ">" : "||", ms / 60000, ( ms / 1000 ) % 60, ( ms / 100 ) % 10 );
+		std::string t = std::string( "Time Line  " ) + b;
+		ImU32 dot = rt.playing ? cGreen : cGrey;
+		if( tl.sync == TlSync::Mtc || tl.sync == TlSync::Ltc )
+		{
+			const bool ltc  = tl.sync == TlSync::Ltc;
+			const double xs = ltc ? show.ltcSec : show.tcSec;
+			const bool xr   = ltc ? show.ltcRun : show.tcRun;
+			t += ltc ? "  LTC" : "  MTC";
+			if( rt.extRun && !xr ) { dot = cOrange; snprintf( b, sizeof( b ), L( " Freilauf %.1f s" ), std::max( 0.0, tl.freewheel - rt.extIdle ) ); t += b; }
+			else if( xs < 0 ) { dot = cRed; t += std::string( " " ) + L( "kein Signal" ); }
+			else { dot = xr ? cGreen : cGrey; t += std::string( " " ) + ( xr ? L( "läuft" ) : L( "steht" ) ); }
+		}
+		else if( tl.sync == TlSync::Beat ) t += "  Beat";
+		if( field( "##tl", dot, t, L( "Time Line: Position und Sync (grün läuft, orange Freilauf, rot kein Signal). Klick: Time Line öffnen" ) ) ) tlSelectTab_ = true;
+	}
+	//engine
+	{
+		DmxIO::Latency lt = io.GetLatency();
+		if( lt.n ) snprintf( b, sizeof( b ), "Engine %.0f Hz  %.1f ms  CPU %.0f %%", engineHz, lt.avgMs, cpu_ );
+		else snprintf( b, sizeof( b ), "Engine %.0f Hz  CPU %.0f %%", engineHz, cpu_ );
+		const ImU32 dot = engineHz > 600 ? cGreen : engineHz > 200 ? cOrange : cRed;
+		if( field( "##engine", dot, b, L( "Engine-Takt, Latenz Eingang -> DMX, CPU. Klick: Performance-Einstellungen" ) ) ) perfWin_ = true;
+	}
+	//inputs: MIDI / OSC / Art-Net in light up on traffic
+	{
+		const double now = Now();
+		bool mid = false;
+		for( auto& a : midi.lastActivity ) mid = mid || now - a.second < 0.15;
+		const uint64_t oc = osc.received.load();
+		if( oc != oscSeen_ ) { oscSeen_ = oc; oscT_ = now; }
+		const bool oac = now - oscT_ < 0.15;
+		auto lamp = [ & ]( const char* id, const char* name, bool on, bool enabled, const char* tip ) {
+			field( id, on ? cBlue : enabled ? IM_COL32( 70, 80, 95, 255 ) : IM_COL32( 50, 52, 58, 255 ), name, tip );
+		};
+		lamp( "##midi", "MIDI", mid, !midi.devices.empty(), L( "MIDI-Eingang (leuchtet bei Empfang)" ) );
+		lamp( "##osc", "OSC", oac, show.output.oscIn, L( "OSC-Eingang (leuchtet bei Empfang)" ) );
+		lamp( "##artin", "Art-Net In", recvRate_ > 0.5f, show.output.artnetInput, L( "Art-Net-Eingang (leuchtet bei Empfang)" ) );
+	}
+	//quality
+	{
+		const int lv = qualityAuto_ ? qualityEff_ : quality_;
+		std::string t = std::string( L( "Qualität " ) ) + QualityName( lv );
+		if( qualityAuto_ && qualityEff_ < quality_ ) t += std::string( " (" ) + L( "gedrosselt" ) + ")";
+		else if( qualityAuto_ ) t += " (Auto)";
+		const ImU32 dot = qualityAuto_ && qualityEff_ < quality_ ? cOrange : 0;
+		if( field( "##quality", dot, t, L( "Darstellungsqualität des Viewports (nur Anzeige, DMX unverändert). Klick: nächste Stufe" ) ) )
+		{
+			quality_    = ( quality_ + 1 ) % 3;
+			qualityEff_ = quality_;
+			SaveSettings();
+		}
+	}
+	//right: message + show
+	{
+		snprintf( b, sizeof( b ), "%s%s   %.0f fps", show.path.empty() ? L( "Unbenannt" ) : FileStem( show.path ).c_str(), show.dirty ? " *" : "", fps );
+		const float tw = ImGui::CalcTextSize( b ).x;
+		const float x1 = ImGui::GetWindowPos().x + ImGui::GetWindowWidth();
+		const ImVec2 p( ImGui::GetWindowPos().x, ImGui::GetWindowPos().y );//the cursor is below the row after the last field
+		float x = x1 - tw - 6 * ui;
+		dl->AddText( ImVec2( x, p.y + ( h - ImGui::GetTextLineHeight() ) * 0.5f ), IM_COL32( 140, 147, 160, 255 ), b );
+		if( !status.empty() && Now() - statusTime < 6.0 )
+		{
+			const float sw = ImGui::CalcTextSize( status.c_str() ).x;
+			x -= sw + 24 * ui;
+			if( x > p.x + 20 * ui ) dl->AddText( ImVec2( x, p.y + ( h - ImGui::GetTextLineHeight() ) * 0.5f ), IM_COL32( 255, 204, 90, 255 ), status.c_str() );
+		}
+	}
 }
 bool App::ShouldRenderViewport( double now ) const
 {
@@ -2377,6 +2647,10 @@ void App::LoadSettings()
 	bridgeOn       = j[ "bridgeOn" ].B( false );
 	bridgeHttpPort = Clamp( j[ "bridgeHttpPort" ].I( 8001 ), 1024, 65535 );
 	ren.projLines  = j[ "projLines" ].B( true );
+	vpBarFold_     = j[ "viewportBarFolded" ].B( false );
+	quality_       = Clamp( j[ "renderQuality" ].I( 1 ), 0, 2 );//default Normal (= 2.0 look)
+	qualityAuto_   = j[ "qualityAuto" ].B( true );
+	qualityEff_    = quality_;
 	languageSaved_ = j[ "language" ].Str( "" );
 	autosaveMin    = Clamp( j[ "autosaveMinutes" ].I( 2 ), 0, 60 );
 }
@@ -2391,6 +2665,9 @@ void App::SaveSettings()
 	j.Set( "bridgeOn", bridgeOn );
 	j.Set( "bridgeHttpPort", bridgeHttpPort );
 	j.Set( "projLines", ren.projLines );
+	j.Set( "viewportBarFolded", vpBarFold_ );
+	j.Set( "renderQuality", quality_ );
+	j.Set( "qualityAuto", qualityAuto_ );
 	if( !languageSaved_.empty() ) j.Set( "language", languageSaved_ );
 	j.Set( "autosaveMinutes", autosaveMin );//only what the user chose (View > Language)
 	WriteText( exeDir + "\\settings.json", WriteJson( j, true ) );
@@ -2739,7 +3016,7 @@ void App::PanelInspector()
 		ImGui::SetItemTooltip( L( "Alle ausgewählten Lampen gegen einen anderen Typ austauschen - Positionen bleiben" ) );
 	}
 
-	if( ImGui::CollapsingHeader( "Position", fx.size() == 1 ? ImGuiTreeNodeFlags_DefaultOpen : 0 ) )
+	if( ls::SectionHeader( "Position", fx.size() == 1 ? ImGuiTreeNodeFlags_DefaultOpen : 0 ) )
 	{
 		V3 p = f0.pos, r = f0.rot;
 		const bool posCh = ls::rs::DragFloat3( "Position (m)", &p.x, 0.02f );
@@ -2812,7 +3089,7 @@ void App::PanelInspector()
 		std::vector< FixtureInst* > fixed;
 		for( auto* f : fx )
 			if( f->def && f->def->kind != Kind::Hazer && !show.HasAttr( *f, Attr::Zoom ) ) fixed.push_back( f );
-		if( !fixed.empty() && ImGui::CollapsingHeader( L( "Abstrahlwinkel" ), ImGuiTreeNodeFlags_DefaultOpen ) )
+		if( !fixed.empty() && ls::SectionHeader( L( "Abstrahlwinkel" ), ImGuiTreeNodeFlags_DefaultOpen ) )
 		{
 			FixtureInst& g = *fixed[ 0 ];
 			float prof     = g.def->beamMin;
@@ -2834,8 +3111,8 @@ void App::PanelInspector()
 			if( fixed.size() < fx.size() ) ImGui::TextDisabled( L( "Lampen mit Zoom-Kanal steuern den Winkel per Zoom." ) );
 		}
 	}
-	if( ImGui::CollapsingHeader( L( "Steuerung" ), ImGuiTreeNodeFlags_DefaultOpen ) ) Programmer( fx );
-	if( fx.size() == 1 && ImGui::CollapsingHeader( L( "DMX-Kanäle" ), ImGuiTreeNodeFlags_DefaultOpen ) ) ChannelList( f0 );
+	if( ls::SectionHeader( L( "Steuerung" ), ImGuiTreeNodeFlags_DefaultOpen ) ) Programmer( fx );
+	if( fx.size() == 1 && ls::SectionHeader( L( "DMX-Kanäle" ), ImGuiTreeNodeFlags_DefaultOpen ) ) ChannelList( f0 );
 	ImGui::EndChild();
 	ImGui::PopStyleVar();
 }
@@ -2934,30 +3211,61 @@ void App::Programmer( std::vector< FixtureInst* >& fx )
 			for( auto* f : fx ) AimAt( show, *f, cam.target );
 		if( ImGui::IsItemHovered() ) ImGui::SetTooltip( L( "Moving Heads auf den Kamera-Drehpunkt richten" ) );
 	}
-	//colour
-	if( has( Attr::Red ) || has( Attr::Cyan ) )
+	//colour (2.1: every colour lamp - RGB/W/A/L, CMY, colour wheel - plus colour temperature)
+	FixtureInst* cf = nullptr;
+	bool anyExtra = false, anyKelvin = false;
+	for( auto* f : fx )
 	{
-		FixtureInst* c = first( has( Attr::Red ) ? Attr::Red : Attr::Cyan );
-		float col[ 3 ];
-		bool sub = c->def && c->def->subtractive;
-		if( sub ) { col[ 0 ] = 1 - show.GetAttr( *c, Attr::Cyan, head ); col[ 1 ] = 1 - show.GetAttr( *c, Attr::Magenta, head ); col[ 2 ] = 1 - show.GetAttr( *c, Attr::Yellow, head ); }
-		else { col[ 0 ] = show.GetAttr( *c, Attr::Red, head ); col[ 1 ] = show.GetAttr( *c, Attr::Green, head ); col[ 2 ] = show.GetAttr( *c, Attr::Blue, head ); }
+		if( !cf && show.HasColor( *f ) ) cf = f;
+		anyExtra  = anyExtra || show.HasExtraEmitters( *f );
+		anyKelvin = anyKelvin || show.HasKelvin( *f ) || show.HasColor( *f );
+	}
+	if( cf )
+	{
+		const V3 cur = show.GetColor( *cf, head );
+		float col[ 3 ] = { cur.x, cur.y, cur.z };
 		if( ImGui::ColorEdit3( L( "Farbe" ), col, ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayHSV ) )
 			for( auto* f : fx )
 			{
-				if( f->def && f->def->subtractive )
+				if( !show.HasColor( *f ) ) continue;
+				if( show.colorMix == 0 && !( f->def && f->def->subtractive ) && show.HasAttr( *f, Attr::Red ) )
 				{
-					show.SetAttr( *f, Attr::Cyan, 1 - col[ 0 ], head );
-					show.SetAttr( *f, Attr::Magenta, 1 - col[ 1 ], head );
-					show.SetAttr( *f, Attr::Yellow, 1 - col[ 2 ], head );
-				}
-				else
-				{
+					//classic: the picker sets R/G/B only (as before 2.1)
 					show.SetAttr( *f, Attr::Red, col[ 0 ], head );
 					show.SetAttr( *f, Attr::Green, col[ 1 ], head );
 					show.SetAttr( *f, Attr::Blue, col[ 2 ], head );
 				}
+				else
+					show.SetColor( *f, V3( col[ 0 ], col[ 1 ], col[ 2 ] ), head );
 			}
+		std::string slot;
+		if( !show.HasAttr( *cf, Attr::Red ) && !show.HasAttr( *cf, Attr::Cyan ) && show.WheelValueFor( *cf, cur, &slot ) >= 0 )
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled( "-> %s", slot.c_str() );
+			if( ImGui::IsItemHovered() ) ImGui::SetTooltip( "%s", L( "Farbrad: der Slot, der der gewählten Farbe am nächsten kommt" ) );
+		}
+		if( anyExtra )
+		{
+			bool am = show.colorMix == 1;
+			if( ImGui::Checkbox( L( "Weiß/Amber/Lime mitmischen" ), &am ) )
+			{
+				show.colorMix = am ? 1 : 0;
+				show.dirty    = true;
+				for( auto* f : fx )
+					if( show.HasExtraEmitters( *f ) ) show.SetColor( *f, show.GetColor( *f, head ), head );
+			}
+			if( ImGui::IsItemHovered() )
+				ImGui::SetTooltip( "%s", L( "An: Weiß, Amber, Lime und Indigo mischen jede Farbe mit (richtiger Farbton, mehr Licht).\nAus: klassisch nur R/G/B, Weiß = gemeinsamer Anteil (Shows vor 2.1).\nGilt für die ganze Show: Paletten, Gruppenfarben, Effekte, Time Line." ) );
+		}
+	}
+	if( anyKelvin )
+	{
+		static float kel = 5600;
+		if( ImGui::SliderFloat( L( "Farbtemperatur" ), &kel, 2000, 10000, "%.0f K" ) )
+			for( auto* f : fx )
+				if( show.HasKelvin( *f ) || show.HasColor( *f ) ) show.SetKelvin( *f, kel, head );
+		if( ImGui::IsItemHovered() ) ImGui::SetTooltip( "%s", L( "Weißes Licht in Kelvin: CTO-Kanal, sonst Warm-/Kaltweiß, sonst als Farbe gemischt" ) );
 	}
 	//pan/tilt pad
 	if( has( Attr::Pan ) && has( Attr::Tilt ) )
@@ -2971,8 +3279,17 @@ void App::Programmer( std::vector< FixtureInst* >& fx )
 		}
 		ImGui::SameLine();
 		ImGui::BeginGroup();
-		ImGui::TextDisabled( "Pan  %5.1f deg", m->st.panTarget );
-		ImGui::TextDisabled( "Tilt %5.1f deg", m->st.tiltTarget );
+		//2.1: pan / tilt in degrees from the centre, editable (all selected lamps)
+		float pd = show.GetAttrDeg( *m, Attr::Pan ), td = show.GetAttrDeg( *m, Attr::Tilt );
+		const float pr = show.AttrRangeDeg( *m, Attr::Pan ), tr = show.AttrRangeDeg( *m, Attr::Tilt );
+		ImGui::SetNextItemWidth( ImGui::GetFontSize() * 7.3f );
+		if( ls::rs::DragFloat( "##pdeg", &pd, 0.5f, -pr * 0.5f, pr * 0.5f, "Pan %.1f°" ) )
+			for( auto* f : fx ) show.SetAttrDeg( *f, Attr::Pan, pd );
+		ImGui::SetItemTooltip( "%s", L( "Pan in Grad ab Mitte (Doppelklick = eintippen)" ) );
+		ImGui::SetNextItemWidth( ImGui::GetFontSize() * 7.3f );
+		if( ls::rs::DragFloat( "##tdeg", &td, 0.5f, -tr * 0.5f, tr * 0.5f, "Tilt %.1f°" ) )
+			for( auto* f : fx ) show.SetAttrDeg( *f, Attr::Tilt, td );
+		ImGui::SetItemTooltip( "%s", L( "Tilt in Grad ab Mitte (Doppelklick = eintippen)" ) );
 		ImGui::TextDisabled( L( "ist: %5.1f / %5.1f" ), m->st.pan, m->st.tilt );
 		ImGui::EndGroup();
 	}

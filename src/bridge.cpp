@@ -853,7 +853,7 @@ void Bridge::Tick( Show& show, double now )
 		lastPage_ = now;
 		std::string html = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>LightStage Bridge</title>"
 		                   "<style>body{font:15px system-ui;margin:24px;background:#111;color:#ddd}a{color:#8cf}td,th{padding:4px 12px;text-align:left}</style>";
-		html += "<h2>LightStage Ableton-Bridge</h2><p>Show: " + showName_ + " · Manifest-Rev " + std::to_string( rev_ ) + L( " · Protokoll " ) + std::to_string( kProtocol ) +
+		html += "<h2>LightStage Bridge</h2><p>Show: " + showName_ + " · Manifest-Rev " + std::to_string( rev_ ) + L( " · Protokoll " ) + std::to_string( kProtocol ) +
 		        L( "</p><p><a href='/manifest.json'>manifest.json</a> · <a href='/osc.txt'>osc.txt</a></p><table><tr><th>Gerät</th><th>Adresse</th><th>Abos</th><th>vor</th></tr>" );
 		for( auto& c : clients_ )
 		{
@@ -1010,4 +1010,14 @@ std::vector< BridgeClient > Bridge::Clients()
 	std::lock_guard< std::mutex > l( mx_ );
 	return clients_;
 }
-}//namespace ls
+void Bridge::RemapChannels( const std::map< int64_t, int64_t >& m )
+{
+	std::lock_guard< std::mutex > l( mx_ );
+	std::map< int64_t, Owned > o;
+	for( auto& kv : owned_ )
+	{
+		auto it = m.find( kv.first );
+		o[ it == m.end() ? kv.first : it->second ] = kv.second;
+	}
+	owned_.swap( o );
+}}//namespace ls

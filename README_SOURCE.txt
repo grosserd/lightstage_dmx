@@ -1,4 +1,4 @@
-LightStage 2.0 - source code
+LightStage 2.1 - source code
 by Grosserd - GNU GPL v3 or later (see LICENSE.txt and COPYING.txt)
 =====================================================================
 

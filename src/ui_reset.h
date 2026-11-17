@@ -127,3 +127,33 @@ inline bool DragFloatRange2( const char* l, float* lo, float* hi, float sp = 1.0
 }
 }//namespace rs
 }//namespace ls
+
+namespace ls
+{
+//switch as a chip (pill button): lit = on. For toolbars - smaller and calmer than a check box. Returns "clicked"
+inline float ChipWidth( const char* label ) { return ImGui::CalcTextSize( label, nullptr, true ).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFontSize() * 0.4f; }
+inline bool Chip( const char* label, bool* v, const ImVec4& on = ImVec4( 0.35f, 0.65f, 1.0f, 1 ) )
+{
+	const bool a = *v;
+	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, ImGui::GetFrameHeight() * 0.5f );
+	ImGui::PushStyleColor( ImGuiCol_Button, a ? ImVec4( on.x * 0.5f, on.y * 0.5f, on.z * 0.5f, 0.95f ) : ImVec4( 1, 1, 1, 0.06f ) );
+	ImGui::PushStyleColor( ImGuiCol_ButtonHovered, a ? ImVec4( on.x * 0.62f, on.y * 0.62f, on.z * 0.62f, 1 ) : ImVec4( 1, 1, 1, 0.13f ) );
+	ImGui::PushStyleColor( ImGuiCol_ButtonActive, ImVec4( on.x * 0.7f, on.y * 0.7f, on.z * 0.7f, 1 ) );
+	ImGui::PushStyleColor( ImGuiCol_Text, a ? ImVec4( 1, 1, 1, 1 ) : ImVec4( 0.66f, 0.70f, 0.78f, 1 ) );
+	const bool c = ImGui::Button( label, ImVec2( ChipWidth( label ), 0 ) );
+	ImGui::PopStyleColor( 4 );
+	ImGui::PopStyleVar();
+	if( c ) *v = !*v;
+	return c;
+}
+//section header (inspector, editors): neutral instead of the blue selection colour, so a selection stays the only blue thing
+inline bool SectionHeader( const char* label, ImGuiTreeNodeFlags flags = 0 )
+{
+	ImGui::PushStyleColor( ImGuiCol_Header, ImVec4( 1, 1, 1, 0.055f ) );
+	ImGui::PushStyleColor( ImGuiCol_HeaderHovered, ImVec4( 1, 1, 1, 0.10f ) );
+	ImGui::PushStyleColor( ImGuiCol_HeaderActive, ImVec4( 1, 1, 1, 0.14f ) );
+	const bool open = ImGui::CollapsingHeader( label, flags );
+	ImGui::PopStyleColor( 3 );
+	return open;
+}
+}//namespace ls

@@ -52,6 +52,7 @@ public:
 	int PushMap( const AbletonMap& m );       //knob/button table -> that device (/ls/map/all), if connected
 	int Subscribers( const std::string& kind );//connected devices subscribed to params / dmx / state
 	std::string ManifestJson( Show& show );   //current manifest (export)
+	void RemapChannels( const std::map< int64_t, int64_t >& m );//lamps re-addressed: taken channels follow (key u*1000+ch)
 
 	std::vector< BridgeClient > Clients();    //copy, for the UI
 	uint32_t Rev() const { return rev_; }

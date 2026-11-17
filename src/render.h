@@ -67,6 +67,7 @@ public:
 	{
 		bool shadows = true, bloom = true, glow = true, projHaze = true;
 		float beamQuality = 0;//> 0: upper limit for stage.beamQuality
+		bool high = false;    //2.1 "high": reflections, ambient occlusion, soft 1024 px shadows, GGX, finer cones
 	} quality;
 	uint64_t renderCount = 0;
 	int selProjector = -1, selScreen = -1;//highlighted in the scene
@@ -117,7 +118,7 @@ private:
 	void BuildScene( Show& show, const std::vector< int >& sel, float time );
 	void AddFixture( const Show& show, const FixtureInst& f, bool selected );
 	void Box( const M4& m, const V3& col, float spec = 0.2f, const V3& emi = V3( 0, 0, 0 ), float flag = 0 );
-	void Cyl( const M4& m, const V3& col, float spec = 0.2f, const V3& emi = V3( 0, 0, 0 ) );
+	void Cyl( const M4& m, const V3& col, float spec = 0.2f, const V3& emi = V3( 0, 0, 0 ), float flag = 0 );
 	void DrawInstances( GLuint prog, bool shadow );
 	void UploadGobos();
 	GpuMesh Upload( const MeshData& m );
@@ -151,6 +152,8 @@ private:
 	std::map< std::string, GpuMesh > models_;
 	std::map< std::string, std::string > modelErrors_;
 	int maxShadows_ = 48;
+	int shadowCur_  = 0;//resolution of the allocated shadow array (768 normal, 1024 high)
+	void EnsureShadowRes( int res );
 	float time_     = 0;
 	V3 ambient_;
 };

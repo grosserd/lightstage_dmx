@@ -86,6 +86,7 @@ public:
 
 	//helpers shared with tests / demo
 	void BuildDemo();
+	void BuildJazzDemo();//2.1 start-up demo (jazz club)
 	bool BuildShowcase( int n, std::string& title );//example shows 0..4 (--showcase <dir>)
 	FixtureInst* AddFixture( const FixtureDef* def, int mode, int uni, int addr, const V3& pos, const V3& rot, const std::string& name );
 	static bool AimAt( Show& s, FixtureInst& f, const V3& target );
@@ -140,6 +141,10 @@ public:
 	std::map< std::string, std::string > tl_;
 	double tlT_ = -10;
 	//2.0 show timeline (ui_timeline.cpp)
+	//block on a clip track at time t: the track uid if it is a clip track, else the first clip track, else a new one. Returns the track uid
+	uint32_t TimelineAddClip( int kind, uint32_t snap, int fx, double t, uint32_t trackUid );
+	//audio file onto the Time Line: new audio track (true) or the file of the existing one is replaced (false); offset < 0 = keep / 0
+	bool AddAudioTrack( const std::string& file, double offset );
 	uint32_t AddTimelineTrack( const std::vector< int >& ids, Attr attr, bool pickLanes );//group track; returns uid
 	void TimelineAddMenu( const std::vector< int >& ids, const Channel* ch, int uni, int adr );//items for context menus
 	void TimelineChannelMenu( int uni, int adr );//timeline items for one DMX address (Inspector channel list, DMX tab)
@@ -149,6 +154,23 @@ public:
 	void SetBottomHeight( float h ) { bottomH_ = h; }//example timeline on the current show (screenshots, --tldemo)
 	bool tlWin_ = false, tlSelectTab_ = false, tlHovered_ = false, tlHoveredNow_ = false;
 	uint32_t tlLanePick_ = 0;//open the lane picker for this track
+	//scripted UI test (--uitest, uitest.cpp): the UI reports places on screen by name, the script feeds the mouse
+	bool uiTest_ = false;
+	std::map< std::string, ImVec4 > uiMarks_;
+	struct UiTestState* ut_ = nullptr;
+	void UiMark( const std::string& name, const ImVec2& a, const ImVec2& b ) { if( uiTest_ ) uiMarks_[ name ] = ImVec4( a.x, a.y, b.x, b.y ); }
+	void UiTestStart( const std::string& logPath );
+	void UiTestInput();//before ImGui::NewFrame
+	bool UiTestDone() const;
+	int UiTestFails() const;
+	//a file dropped at a place of the window (tests; DropFile uses the real mouse)
+	void DropFileAt( const std::string& path, float x, float y ) { dropPt_ = true; dropX_ = x; dropY_ = y; DropFile( path ); dropPt_ = false; }
+	bool dropPt_ = false;
+	float dropX_ = 0, dropY_ = 0;
+	//drag & drop onto the Time Line: payload "LS_TLCLIP" (snapshot / effect from its list)
+	struct TlClipDrag { int kind; uint32_t snap; int fx; };
+	struct { bool on = false; TlClipDrag d{}; double t = 0; uint32_t track = 0; } tlDrop_;//dropped: applied at the start of the next frame
+	struct { float x0 = 0, y0 = 0, x1 = 0, y1 = 0, pps = 0; double view0 = 0; int frame = -10; } tlGeo_;//time area on screen (files dropped from Windows)
 	uint32_t tlConvert_ = 0; //Lightshow track to convert into time lanes (next frame)
 	bool TlConvertShowTrack( uint32_t uid );
 	std::string OpenLightshowDialog();
@@ -164,6 +186,8 @@ public:
 	void ShowOscWindow() { oscWin_ = true; }
 	void ShowResolumeWindow() { resWin_ = true; }
 	void ShowLbxWindow() { lbxWin_ = true; }
+	std::string lbxUiTest;//test: start the Lightshow export from the UI frame like the button (--lightshowui)
+	int lbxUiState = 0;   //0 waiting, 1 running, 2 finished, 3 start failed
 	//2.0: Lightshow import (.lightshow -> new show / current show, as time lanes or as a Lightshow track)
 	bool LbiOpen( const std::string& path );//reads the file and opens the import window
 	bool LbiRun();                           //imports with the window's options
@@ -299,6 +323,7 @@ private:
 	int tab_ = 0;
 	std::vector< MidiEvent > events_;
 	bool showStats_ = true;
+	bool vpBarFold_ = false;//viewport toolbar folded to master + LIVE (settings.json)
 	uint64_t lastSent_ = 0, lastRecv_ = 0;
 	float sentRate_ = 0, recvRate_ = 0;
 	double rateT_ = 0;
@@ -319,11 +344,15 @@ private:
 	void ExportWindow();
 	//2.0: Lightshow export (.lightshow, lbshow.h) - runs like the video export (engine stopped, frame by frame)
 	bool lbxWin_ = false;
+	int lbxUiWait_ = 0;
 	LbxOptions lbxOpt_;
 	LbxJob lbx_;
 	bool lbxEngineWas_ = false;
 	float lbxFrom_ = 0, lbxTo_ = 0;//UI: range (to 0 = end of the timeline)
 	bool LbxStart( const std::string& path );
+public:
+	bool MoveFixturesUi( int dragged, int anchorId, bool after );//PATCH list drag & drop (also the self test)
+private:
 	void LbxEnd( bool ok );
 	void LbxWindow();
 	bool lbiWin_ = false;
@@ -349,6 +378,20 @@ private:
 	uint32_t lastKickVer_ = 0;
 	//performance mode
 	bool perfMode_ = false, perfWin_ = false, settingsLoaded_ = false;
+	//2.1: visual quality levels (0 draft, 1 normal, 2 high) + automatic throttling; status bar
+public:
+	int quality_ = 1;          //chosen level 0 draft, 1 normal (= 2.0), 2 high (settings.json "renderQuality")
+	bool qualityAuto_ = true;  //step down while the frame rate is low (settings.json "qualityAuto")
+	int qualityEff_ = 1;       //level in use (<= quality_)
+	void ApplyQuality();       //renderer limits from performance mode + quality level (export: always high)
+	void QualityTick( float dt );
+	void StatusBar();
+	bool SurfaceUi( const char* id, const char* label, Surface& sf );//2.1 stage tab: reflection of a floor / deck
+	int lastOutputTabFrame_ = -10;//frame in which the Output tab was drawn (UI test)
+private:
+	float qLow_ = 0, qHigh_ = 0;//seconds below / above the frame rate limits
+	uint64_t oscSeen_ = 0;
+	double oscT_ = -10;
 	std::string languageSaved_;//settings.json "language" ("de" / "en"), empty = default English
 	int perfView_  = 1;
 	float perfFps_ = 20, perfScale_ = 0.5f;

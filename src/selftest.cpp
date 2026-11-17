@@ -3134,8 +3134,142 @@ int RunSelfTest( App& app, const std::string& dir )
 					const int vo   = fxj[ 0 ][ "vis" ].I();
 					const bool vis = rd && (int)lf.vis.size() == lf.frames && vo >= 0 && lf.vis[ 79 ][ vo ] > lf.vis[ 0 ][ vo ];
 					const bool hv  = rd && vo >= 0 && lf.vis.size() > 79 && (int)lf.vis[ 0 ].size() > vo;
+					{
+						//patch overview: names + attributes of every slot, profile + mode
+						bool chOk = fxj.Size() > 0;
+						for( size_t i = 0; i < fxj.Size() && i < s.fixtures.size(); ++i )
+							chOk = chOk && (int)fxj[ i ][ "channels" ].Size() == s.fixtures[ i ].Footprint() && (int)fxj[ i ][ "attrs" ].Size() == s.fixtures[ i ].Footprint();
+						const bool dimName = fxj.Size() > 0 && fxj[ 0 ][ "attrs" ][ dimSlot ].Str() == AttrName( Attr::Dimmer );
+						T( chOk && dimName && !fxj[ 0 ][ "profile" ].Str().empty(), "Lightshow-Export: Kanalnamen je Lampe (%d Lampen, Lampe 1: %s / %s, Kanal %d = %s)",
+						   (int)fxj.Size(), fxj[ 0 ][ "profile" ].Str().c_str(), fxj[ 0 ][ "mode" ].Str().c_str(), dimSlot + 1, fxj[ 0 ][ "channels" ][ dimSlot ].Str().c_str() );
+					}
+					{
+						//group faders: function + DMX slots (players apply them live)
+						const size_t ng = s.groups.size();
+						const Mode* m0  = F( 0 ).M();
+						Attr a1         = m0 && m0->ch.size() > 1 ? m0->ch[ 1 ].attr : Attr::Dimmer;
+						GroupFader ga;
+						ga.name     = "LB Attr";
+						ga.fixtures = { F( 0 ).id, F( 1 ).id };
+						ga.attr     = a1;
+						ga.value    = 0.25f;
+						GroupFader gc;
+						gc.name     = "LB Farbe";
+						gc.fixtures = { F( 2 ).id };
+						gc.kind     = 1;
+						gc.hue      = 0.6f;
+						s.groups.push_back( ga );
+						s.groups.push_back( gc );
+						LbxOptions go;
+						go.to       = 1.0;
+						go.fxLayers = false;
+						std::string ge;
+						LbxFile G;
+						const std::string gp = dir + "\\selftest_groups.lightshow";
+						const bool gok      = LbxExport( s, app.sim, go, gp, &ge ) && LbxRead( gp, G, &ge );
+						s.groups.resize( ng );
+						const Json& gl = G.scene[ "groups" ];
+						int nA = 0, wantA = 0, nC = 0;
+						bool addrOk = true;
+						for( size_t i = 0; i < gl.Size(); ++i )
+						{
+							if( gl[ i ][ "name" ].Str() == "LB Attr" )
+							{
+								nA = (int)gl[ i ][ "targets" ].Size();
+								for( size_t k = 0; k < gl[ i ][ "targets" ].Size(); ++k )
+									addrOk = addrOk && gl[ i ][ "targets" ][ k ][ 3 ].Str() == AttrName( a1 ) && gl[ i ][ "targets" ][ k ][ 1 ].I() % 1 == 0;
+								addrOk = addrOk && gl[ i ][ "kind" ].I() == 0 && gl[ i ][ "attr" ].Str() == AttrName( a1 ) && fabs( gl[ i ][ "value" ].Num() - 0.25 ) < 1e-6;
+								if( nA ) addrOk = addrOk && gl[ i ][ "targets" ][ 0 ][ 1 ].I() == F( 0 ).address - 1 + 1;
+							}
+							if( gl[ i ][ "name" ].Str() == "LB Farbe" ) nC = (int)gl[ i ][ "targets" ].Size();
+						}
+						for( int k : { 0, 1 } )
+							if( const Mode* m = F( k ).M() )
+								for( auto& c : m->ch ) wantA += c.attr == a1 && !c.isFine;
+						T( gok && nA == wantA && nA > 0 && nC > 0 && addrOk, "Lightshow-Export: Gruppenfader mit Funktion (%s: %d Kanäle, Farbe: %d Kanäle) %s",
+						   AttrName( a1 ), nA, nC, ge.c_str() );
+					}
 					T( drop && scene && vis, "Lightshow-Export: Marker \"Drop\" bei 4 s %s, Szene %d Lampen (Dimmer-Kanal %d), 3D-Daten (%d Bilder à %d Byte) Helligkeit Lampe 1 %d -> %d",
 					   drop ? "ja" : "nein", (int)fxj.Size(), dimSlot, (int)lf.vis.size(), lf.visBytes, hv ? lf.vis[ 0 ][ vo ] : -1, hv ? lf.vis[ 79 ][ vo ] : -1 );
+					//Lightshow export: effect layers (EFFX, FXLD, FXLV). Layer "off" = show without the effect, layer "on" = effect
+					//forced on. Each must equal a separate export in which the effect has level 0 / runs from the start without fade.
+					{
+						const Effect* chaseTpl = nullptr;
+						for( auto& pr : BuiltinFxPresets() )
+							if( !chaseTpl && pr.fx.kind == FxKind::Dimmer ) chaseTpl = &pr.fx;
+						const std::vector< Effect > keepFx = s.effects;
+						s.effects.clear();
+						const int fa = chaseTpl ? AddEffectFromPreset( s, *chaseTpl, "LB an", { F( 0 ).id, F( 1 ).id }, true ) : 0;
+						const int fb = chaseTpl ? AddEffectFromPreset( s, *chaseTpl, "LB aus", { F( 2 ).id, F( 3 ).id }, false ) : 0;
+						for( auto& e : s.effects ) e.fade = 0;
+						auto fxById = [ & ]( int id ) -> Effect* { for( auto& e : s.effects ) if( e.id == id ) return &e; return nullptr; };
+						const std::string p1 = dir + "\\selftest_fx1.lightshow", p2 = dir + "\\selftest_fx2.lightshow", p3 = dir + "\\selftest_fx3.lightshow";
+						LbxOptions fo;
+						fo.to = 3.0;
+						std::string e1, e2, e3;
+						LbxFile A, B, C;
+						bool ok = fa && fb && LbxExport( s, app.sim, fo, p1, &e1 ) && LbxRead( p1, A, &e1 );
+						fo.fxLayers = false;
+						fxById( fa )->level = 0;//reference "off": a without effect a
+						ok = ok && LbxExport( s, app.sim, fo, p2, &e2 ) && LbxRead( p2, B, &e2 );
+						fxById( fa )->level = 1;
+						fxById( fb )->on    = true;//reference "on": b running from the start
+						ok = ok && LbxExport( s, app.sim, fo, p3, &e3 ) && LbxRead( p3, C, &e3 );
+						fxById( fb )->on = false;
+						const LbxFile::Layer *lo = nullptr, *ln = nullptr;
+						for( auto& L : A.layers )
+						{
+							if( L.fx == fa && !L.on ) lo = &L;
+							if( L.fx == fb && L.on ) ln = &L;
+						}
+						//VIS field layout (u8 / int16) from the scene
+						std::vector< uint8_t > kind( A.visBytes, 0 );
+						const Json& sf = A.scene[ "fixtures" ];
+						for( size_t i = 0; i < sf.Size(); ++i )
+							for( int k = 0; k < 6; ++k )
+							{
+								const int at = sf[ i ][ "vis" ].I() + 4 + 2 * k;
+								if( at + 1 < A.visBytes ) { kind[ at ] = 1; kind[ at + 1 ] = 2; }
+							}
+						auto d16 = []( const std::vector< uint8_t >& f, size_t i ) { return (int)(int16_t)( f[ i ] | ( f[ i + 1 ] << 8 ) ); };
+						auto rd16 = []( const std::vector< uint8_t >& f, size_t i ) { return (int)(int16_t)( f[ i ] | ( f[ i + 1 ] << 8 ) ); };
+						std::string why;
+						auto check = [ & ]( const LbxFile::Layer* L, const LbxFile& R, int& dmxBad, int& visBad, int& changed ) {
+							dmxBad = visBad = changed = 0;
+							if( !L || (int)L->dmx.size() != A.frames || R.frames != A.frames ) { dmxBad = -1; return; }
+							for( int k = 0; k < A.frames; ++k )
+							{
+								for( int c = 0; c < A.dmxBytes; ++c )
+								{
+									const int d = d16( L->dmx[ k ], 2 * (size_t)c );
+									if( d ) ++changed;
+									if( (int)A.dmx[ k ][ c ] + d != (int)R.dmx[ k ][ c ] && ++dmxBad <= 4 )
+									{
+										char w[ 96 ];
+										snprintf( w, sizeof( w ), " [B%d K%d: %d%+d≠%d]", k, c, (int)A.dmx[ k ][ c ], d, (int)R.dmx[ k ][ c ] );
+										why += w;
+									}
+								}
+								if( (int)L->vis.size() != A.frames || R.vis.size() != A.vis.size() ) { visBad = -1; continue; }
+								for( int b = 0; b < A.visBytes; ++b )
+								{
+									const int d = d16( L->vis[ k ], 2 * (size_t)b );
+									if( kind[ b ] == 0 && (int)A.vis[ k ][ b ] + d != (int)R.vis[ k ][ b ] ) ++visBad;
+									if( kind[ b ] == 1 && rd16( A.vis[ k ], b ) + d != rd16( R.vis[ k ], b ) ) ++visBad;
+								}
+							}
+						};
+						int ob = 0, ov = 0, oc = 0, nb = 0, nv = 0, nc = 0;
+						check( lo, B, ob, ov, oc );
+						check( ln, C, nb, nv, nc );
+						const Json& fl = A.effects[ "effects" ];
+						const bool meta = fl.Size() == 2 && fl[ 0 ][ "id" ].I() == fa && fl[ 0 ][ "off" ].B() && fl[ 0 ][ "share" ].Num() > 0.99 && fl[ 1 ][ "on" ].B() &&
+						                  !fl[ 1 ][ "off" ].B() && fl[ 1 ][ "active" ].Size() == 0 && fl[ 0 ][ "fixtures" ].Size() == 2;
+						T( ok && lo && ln && ob == 0 && ov == 0 && nb == 0 && nv == 0 && oc > 0 && nc > 0 && meta,
+						   "Lightshow-Export Effekt-Ebenen: \"aus\" = Export ohne Effekt (%d DMX-/%d 3D-Abweichungen, %d Werte), \"an\" = Export mit Effekt (%d/%d, %d Werte), EFFX %s, %u Byte %s%s%s%s",
+						   ob, ov, oc, nb, nv, nc, meta ? "ok" : "falsch", (unsigned)A.fileBytes, e1.c_str(), e2.c_str(), e3.c_str(), why.c_str() );
+						s.effects = keepFx;
+					}
 					//2.0: Lightshow import - export again from the imported show and compare frame by frame
 					{
 						const std::string lbp2 = dir + "\\selftest_reimport.lightshow";
@@ -3885,6 +4019,418 @@ int RunSelfTest( App& app, const std::string& dir )
 		StopAllEffects( s );
 		s.effects.clear();
 		RunEffects( s, 0.1 );
+	}
+	//---- PATCH order (drag & drop): ripple re-addressing, everything on DMX channels follows the lamps
+	{
+		app.NewShow();
+		app.sel.clear();
+		const FixtureDef* par = nullptr;
+		for( auto& d : app.lib.defs )
+		{
+			if( d->id.rfind( "generic/", 0 ) != 0 || d->kind != Kind::Par ) continue;
+			FixtureInst tmp;
+			tmp.def = d.get();
+			if( s.HasAttr( tmp, Attr::Dimmer ) && s.HasAttr( tmp, Attr::Red ) ) { par = d.get(); break; }
+		}
+		const int P = par ? par->modes[ 0 ].Footprint() : 0;
+		std::vector< int > id;
+		for( int i = 0; i < 3 && par; ++i )
+			if( FixtureInst* f = app.AddFixture( par, 0, 1, 1 + i * P, V3( (float)i, 6, 0 ), V3( 180, 0, 0 ), "" ) ) id.push_back( f->id );
+		FixtureInst* dd = par ? app.AddFixture( par, 0, 1, 200, V3( 4, 6, 0 ), V3( 180, 0, 0 ), "" ) : nullptr;
+		T( id.size() == 3 && dd && P > 0 && P < 40, "Umsortieren: 4 Lampen (%d Kanäle) angelegt", P );
+		if( id.size() == 3 && dd && P > 0 && P < 40 )
+		{
+			const int dId = dd->id;
+			auto F        = [ & ]( int i ) { return s.FindFixture( i ); };
+			s.Set( *F( id[ 0 ] ), 0, 11 );
+			s.Set( *F( id[ 1 ] ), 0, 55 );
+			s.Set( *F( id[ 2 ] ), 0, 77 );
+			s.Set( *F( dId ), 0, 99 );
+			const int cA = F( id[ 2 ] )->address;
+			Effect e;
+			e.id       = 9001;
+			e.type     = FxType::Lfo;
+			e.tgt.mode = 2;
+			e.tgt.uni  = 1;
+			e.tgt.ch   = cA;
+			s.effects.push_back( e );
+			MidiMap mm;
+			mm.target     = MidiTarget::DmxChannel;
+			mm.universe   = 1;
+			mm.channelDmx = cA + 1;
+			s.midi.push_back( mm );
+			TlTrack tt;
+			tt.kind = TlTrackKind::Dmx;
+			TlLane ln;
+			ln.kind = TlLaneKind::Dmx;
+			ln.uni  = 1;
+			ln.ch   = cA;
+			tt.lanes.push_back( ln );
+			s.tl.tracks.push_back( tt );
+			AbletonMap am;
+			am.knobs[ 0 ] = "dmx:1:" + std::to_string( cA );
+			am.state      = "x%22uni%3A1%3A" + std::to_string( cA ) + "%22";
+			s.ableton.push_back( am );
+			//C in front of A: C = 1, A and B move up, D (behind a gap) stays at 200
+			const bool ok1 = app.MoveFixturesUi( id[ 2 ], id[ 0 ], false );
+			DmxFrame* fr   = s.Frame( 1 );
+			T( ok1 && s.fixtures[ 0 ].id == id[ 2 ] && F( id[ 2 ] )->address == 1 && F( id[ 0 ] )->address == 1 + P && F( id[ 1 ] )->address == 1 + 2 * P && F( dId )->address == 200 && ( *fr )[ 0 ] == 77 && ( *fr )[ P ] == 11 && ( *fr )[ 2 * P ] == 55,
+			   "Umsortieren C vor A: Adressen %d / %d / %d, D %d, Programmer-Werte folgen (%d %d %d)", F( id[ 2 ] )->address, F( id[ 0 ] )->address, F( id[ 1 ] )->address, F( dId )->address, ( *fr )[ 0 ], ( *fr )[ P ], ( *fr )[ 2 * P ] );
+			T( s.effects.back().tgt.ch == 1 && s.midi.back().channelDmx == 2 && s.tl.tracks.back().lanes[ 0 ].ch == 1 && s.ableton.back().knobs[ 0 ] == "dmx:1:1" && s.ableton.back().state == "x%22uni%3A1%3A1%22",
+			   "Umsortieren: Modulator-DMX-Ziel %d, MIDI-Map %d, DMX-Time-Lane %d, Ableton %s / %s folgen", s.effects.back().tgt.ch, s.midi.back().channelDmx, s.tl.tracks.back().lanes[ 0 ].ch, s.ableton.back().knobs[ 0 ].c_str(), s.ableton.back().state.c_str() );
+			//A behind D: the hole closes (B moves down), the gap before D stays, A = 200 + P
+			const bool ok2 = app.MoveFixturesUi( id[ 0 ], dId, true );
+			T( ok2 && F( id[ 1 ] )->address == 1 + P && F( dId )->address == 200 && F( id[ 0 ] )->address == 200 + P && ( *fr )[ P ] == 55 && ( *fr )[ 199 ] == 99 && ( *fr )[ 199 + P ] == 11 && s.fixtures.back().id == id[ 0 ],
+			   "Umsortieren A hinter D: B %d, D %d (Lücke bleibt), A %d", F( id[ 1 ] )->address, F( dId )->address, F( id[ 0 ] )->address );
+			//no room at the end of the universe: refused, nothing changes
+			FixtureInst* ee = app.AddFixture( par, 0, 1, 512 - P + 1, V3( 5, 6, 0 ), V3( 180, 0, 0 ), "" );
+			const int bA    = F( id[ 1 ] )->address;
+			const bool ok3  = ee && app.MoveFixturesUi( id[ 1 ], ee->id, true );
+			T( ee && !ok3 && F( id[ 1 ] )->address == bA && ( *fr )[ bA - 1 ] == 55, "Umsortieren ohne Platz wird abgelehnt, nichts geändert" );
+			//into another universe: B in front of a lamp in universe 2 (that one moves up), the value goes along
+			const int u2    = s.AddUniverse();
+			FixtureInst* g2 = app.AddFixture( par, 0, u2, 1, V3( 6, 6, 0 ), V3( 180, 0, 0 ), "" );
+			const int g2Id  = g2 ? g2->id : 0;
+			const bool ok4  = g2 && app.MoveFixturesUi( id[ 1 ], g2Id, false );
+			fr              = s.Frame( 1 );
+			DmxFrame* fr2   = s.Frame( u2 );
+			T( ok4 && F( id[ 1 ] )->universe == u2 && F( id[ 1 ] )->address == 1 && F( g2Id )->address == 1 + P && fr2 && ( *fr2 )[ 0 ] == 55 && ( *fr )[ bA - 1 ] == 0,
+			   "Umsortieren in Universe %d: B %d.%03d, dortige Lampe rückt auf %d, Wert folgt", u2, F( id[ 1 ] )->universe, F( id[ 1 ] )->address, g2Id ? F( g2Id )->address : 0 );
+		}
+		s.effects.clear();
+		s.midi.clear();
+		s.tl.tracks.clear();
+		s.ableton.clear();
+		app.NewShow();
+	}
+	//---- drag & drop onto the Time Line: snapshot / effect block at a time, audio file
+	{
+		app.NewShow();
+		Timeline& tl = app.show.tl;
+		tl.tracks.clear();
+		tl.length = 20;
+		const uint32_t u1 = app.TimelineAddClip( (int)TlClipKind::Snapshot, 77, 0, 3.0, 0 );
+		const uint32_t u2 = app.TimelineAddClip( (int)TlClipKind::Effect, 0, 5, 10.0, u1 );
+		TlTrack g2;
+		g2.uid  = tl.NewUid();
+		g2.kind = TlTrackKind::Fixtures;
+		tl.tracks.push_back( g2 );
+		const uint32_t u3 = app.TimelineAddClip( (int)TlClipKind::Snapshot, 78, 0, 19.5, g2.uid );//not a clip track: first clip track
+		TlTrack* ct = tl.Find( u1 );
+		T( u1 && u2 == u1 && u3 == u1 && ct && ct->kind == TlTrackKind::Clips && ct->clips.size() == 3 && ct->clips[ 0 ].snap == 77 && fabs( ct->clips[ 0 ].t - 3.0 ) < 1e-9 && ct->clips[ 1 ].kind == TlClipKind::Effect && ct->clips[ 1 ].fx == 5 && tl.length >= 19.5 + ct->clips[ 2 ].len - 1e-9 && tl.tracks.size() == 2,
+		   "Drag & Drop Time Line: Block legt Clip-Spur an, weitere Blöcke in dieselbe Spur (%d Blöcke), Länge wächst auf %.1f s", ct ? (int)ct->clips.size() : -1, tl.length );
+		const bool a1 = app.AddAudioTrack( "C:\\x\\eins.wav", 2.0 );
+		const bool a2 = app.AddAudioTrack( "C:\\x\\zwei.mp3", -1 );
+		int na = 0;
+		for( auto& t : tl.tracks ) na += t.kind == TlTrackKind::Audio;
+		T( a1 && !a2 && na == 1 && tl.tracks[ 0 ].kind == TlTrackKind::Audio && tl.tracks[ 0 ].name == "zwei" && fabs( tl.tracks[ 0 ].offset - 2.0 ) < 1e-9,
+		   "Drag & Drop Audio: erste Datei = neue Audiospur bei 2 s, zweite ersetzt die Datei (%d Audiospur, '%s', Versatz %.1f s)", na, tl.tracks[ 0 ].name.c_str(), tl.tracks[ 0 ].offset );
+		tl.tracks.clear();
+		app.NewShow();
+	}
+	//---- sections: blocks of a collapsed track (move, copy, trim, split, join) + range over all tracks
+	{
+		app.NewShow();
+		Show& sh     = app.show;
+		Timeline& tl = sh.tl;
+		tl.tracks.clear();
+		tl.markers.clear();
+		tl.length = 30;
+		TlTrack tr;
+		tr.uid  = tl.NewUid();
+		tr.kind = TlTrackKind::Fixtures;
+		tr.open = false;
+		tr.lanes.resize( 2 );
+		tr.lanes[ 1 ].attr = Attr::Pan;
+		for( double t : { 0.0, 1.0, 2.0, 10.0, 11.0 } ) TlSetKey( tr.lanes[ 0 ], t, t < 5 ? (float)( t / 2 ) : (float)( t - 10 ), nullptr, TlInterp::Linear );
+		for( double t : { 0.5, 1.5, 10.5 } ) TlSetKey( tr.lanes[ 1 ], t, 0.5f, nullptr, TlInterp::Linear );
+		tl.tracks.push_back( tr );
+		TlTrack& t = tl.tracks[ 0 ];
+		std::vector< TlBlock > b;
+		auto nKeys = [ & ] { return (int)( t.lanes[ 0 ].keys.size() + t.lanes[ 1 ].keys.size() ); };
+		TlBlocks( tl, t, b );
+		T( b.size() == 2 && fabs( b[ 0 ].t0 ) < 1e-9 && fabs( b[ 0 ].t1 - 2 ) < 1e-9 && b[ 0 ].keys == 5 && fabs( b[ 1 ].t0 - 10 ) < 1e-9 && fabs( b[ 1 ].t1 - 11 ) < 1e-9, "Abschnitte: Pause > 2 Takte trennt (%d Blöcke, erster %.1f-%.1f s mit %d Keys)", (int)b.size(), b[ 0 ].t0, b[ 0 ].t1, b[ 0 ].keys );
+		const float vBefore = TlEval( t.lanes[ 0 ], 1.25 );
+		const bool split    = TlSplitBlock( tl, t, 1.25 );
+		TlBlocks( tl, t, b );
+		T( split && b.size() == 3 && fabs( b[ 0 ].t1 - 1.249 ) < 1e-6 && fabs( b[ 1 ].t0 - 1.25 ) < 1e-9 && fabs( TlEval( t.lanes[ 0 ], 1.25 ) - vBefore ) < 1e-4 && fabs( TlEval( t.lanes[ 0 ], 1.6 ) - 0.8f ) < 1e-3 && !TlSplitBlock( tl, t, 6.0 ),
+		   "Abschnitt teilen bei 1,25 s: %d Blöcke, Kurve bleibt (%.3f -> %.3f), außerhalb eines Blocks nichts", (int)b.size(), vBefore, TlEval( t.lanes[ 0 ], 1.25 ) );
+		const int n0 = nKeys();
+		TlMoveBlocks( tl, t, { { b[ 1 ].t0, b[ 1 ].t1 } }, 3.0, false );
+		TlBlocks( tl, t, b );
+		T( b.size() == 3 && fabs( b[ 1 ].t0 - 4.25 ) < 1e-9 && fabs( b[ 1 ].t1 - 5.0 ) < 1e-9 && nKeys() == n0 && fabs( TlEval( t.lanes[ 0 ], 5.0 ) - 1.0f ) < 1e-4, "Abschnitt verschieben +3 s: Block bei %.2f-%.2f s, %d Keys wie vorher, bleibt eigener Block", b[ 1 ].t0, b[ 1 ].t1, nKeys() );
+		TlMoveBlocks( tl, t, { { 10.0, 11.0 } }, -5.0, true );
+		TlBlocks( tl, t, b );
+		T( b.size() == 4 && fabs( b[ 2 ].t0 - 5 ) < 1e-9 && fabs( b[ 2 ].t1 - 6 ) < 1e-9 && fabs( b[ 3 ].t0 - 10 ) < 1e-9 && fabs( b[ 1 ].t1 - 5 ) > 0.01 && fabs( TlEval( t.lanes[ 0 ], 6.0 ) - 1.0f ) < 1e-4 && fabs( TlEval( t.lanes[ 0 ], 5.0 ) ) < 1e-4,
+		   "Abschnitt kopieren nach 5 s: %d Blöcke, Ziel überschrieben (Wert bei 5 s = %.2f), Original bleibt", (int)b.size(), TlEval( t.lanes[ 0 ], 5.0 ) );
+		TlTrimBlock( tl, t, 10.0, 11.0, false, 10.5 );
+		TlBlocks( tl, t, b );
+		const bool trimOk = b.size() == 4 && fabs( b[ 3 ].t1 - 10.5 ) < 1e-9 && fabs( TlEval( t.lanes[ 0 ], 10.5 ) - 0.5f ) < 1e-4 && fabs( TlEval( t.lanes[ 0 ], 12.0 ) - 0.5f ) < 1e-4;
+		TlTrimBlock( tl, t, 10.0, 10.5, true, 9.0 );//extend to the left: the curve stays
+		TlBlocks( tl, t, b );
+		T( trimOk && b.size() == 4 && fabs( b[ 3 ].t0 - 9.0 ) < 1e-9, "Abschnitt beschneiden: rechte Kante 11 -> 10,5 s (Wert dort %.2f), linke Kante auf %.1f s verlängert", TlEval( t.lanes[ 0 ], 10.5 ), b[ 3 ].t0 );
+		{
+			Timeline c2;
+			TimelineFromJson( c2, TimelineToJson( tl ) );
+			std::vector< TlBlock > b2;
+			TlBlocks( c2, c2.tracks[ 0 ], b2 );
+			const bool joined = TlJoinBlocks( tl, t, b[ 1 ].t1 );
+			TlBlocks( tl, t, b );
+			T( b2.size() == 4 && joined && b.size() == 3, "Abschnitte: Schnitte überleben Speichern / Undo (%d Blöcke), Verbinden -> %d Blöcke", (int)b2.size(), (int)b.size() );
+		}
+		//range over all tracks
+		tl.markers.push_back( { 9.5, "A" } );
+		Cue cu;
+		cu.trigger = 2;
+		cu.tc      = 9.2;
+		sh.cues.push_back( cu );
+		const int k0        = nKeys();
+		const double first9 = b.back().t0;//9.0
+		TlInsertTime( sh, 9.0, 2.0 );
+		TlBlocks( tl, t, b );
+		const bool insOk = fabs( b.back().t0 - ( first9 + 2 ) ) < 1e-9 && fabs( tl.markers[ 0 ].t - 11.5 ) < 1e-9 && fabs( sh.cues.back().tc - 11.2 ) < 1e-9 && fabs( tl.length - 32 ) < 1e-9 && nKeys() == k0;
+		TlRangeClip rc;
+		TlRangeCopy( sh, 0.0, 2.0, rc );
+		int rcKeys = 0;
+		for( auto& e : rc.keys ) rcKeys += (int)e.second.size();
+		TlRangePaste( sh, rc, 20.0 );
+		const bool pasteOk = nKeys() == k0 + rcKeys && fabs( tl.length - 34 ) < 1e-9 && rcKeys > 0;
+		const double at    = TlRangeMove( sh, 11.0, 12.0, 0.0 );//the range with marker + cue to the start
+		const bool moveOk  = fabs( at ) < 1e-9 && nKeys() == k0 + rcKeys && fabs( tl.markers[ 0 ].t - 0.5 ) < 1e-9 && sh.cues.back().trigger == 2 && fabs( sh.cues.back().tc - 0.2 ) < 1e-9 && fabs( tl.length - 34 ) < 1e-9;
+		const int kBefore  = nKeys();
+		TlDeleteTime( sh, 0.0, 1.0 );
+		T( insOk && pasteOk && moveOk && nKeys() < kBefore && tl.markers.empty() && sh.cues.back().trigger == 0 && fabs( tl.length - 33 ) < 1e-9,
+		   "Bereich über alle Spuren: Zeit einfügen %d, kopieren + einfügen %d (%d Keys), verschieben %d (Marker + Cue mit), ausschneiden: Cue wird GO-Cue, Länge %.0f s", insOk, pasteOk, rcKeys, moveOk, tl.length );
+		tl.tracks.clear();
+		tl.markers.clear();
+		app.NewShow();
+	}
+	//---- 2.1 colour engine: emitter mixing, colour wheel, colour temperature, classic mode
+	{
+		app.NewShow();
+		const FixtureDef* dRgb  = app.lib.Find( "ofl/cameo/flat-par-can-tri-7x-3w-ir" );
+		const FixtureDef* dRgbw = app.lib.Find( "generic/generic/led-par-rgbw" );
+		const FixtureDef* dRgba = app.lib.Find( "generic/generic/led-par-rgbwauv" );
+		const FixtureDef* dSpot = app.lib.Find( "generic/generic/moving-head-spot" );
+		const FixtureDef* dWc   = app.lib.Find( "ofl/generic/cw-ww-fader" );
+		auto add = [ & ]( const FixtureDef* d, int mode, int adr ) { FixtureInst* f = app.AddFixture( d, mode, 1, adr, V3( 0, 6, 0 ), V3( 180, 0, 0 ), "" ); return f ? f->id : -1; };
+		const int iRgb = add( dRgb, 2, 1 ), iRgbw = add( dRgbw, 0, 10 ), iRgba = add( dRgba, 0, 20 ), iSpot = add( dSpot, 0, 40 ), iWc = add( dWc, 0, 70 );
+		T( iRgb >= 0 && iRgbw >= 0 && iRgba >= 0 && iSpot >= 0 && iWc >= 0, "Farb-Test: Lampen angelegt (RGB, RGBW, RGBWAUV, Spot mit Farbrad + CTO, Warm-/Kaltweiß)" );
+		auto F = [ & ]( int id ) -> FixtureInst& { return *s.FindFixture( id ); };
+		auto gv = [ & ]( int id, Attr a ) { return s.GetAttr( F( id ), a ); };
+		auto close3 = []( const V3& a, const V3& b, float tol ) {
+			const float ma = std::max( { a.x, a.y, a.z, 1e-4f } ), mb = std::max( { b.x, b.y, b.z, 1e-4f } );
+			const V3 d = a / ma - b / mb;
+			return fabsf( d.x ) < tol && fabsf( d.y ) < tol && fabsf( d.z ) < tol;
+		};
+		T( s.colorMix == 1, "Neue Show: Farbmischung Auto" );
+		if( iRgb >= 0 && iRgbw >= 0 && iRgba >= 0 && iSpot >= 0 && iWc >= 0 )
+		{
+			//RGB-only lamps: exactly the colour, in both modes
+			bool rgbSame = true;
+			for( int mix = 0; mix < 2; ++mix )
+			{
+				s.colorMix = mix;
+				s.SetColor( F( iRgb ), V3( 0.3f, 0.6f, 0.9f ) );
+				rgbSame = rgbSame && fabsf( gv( iRgb, Attr::Red ) - 0.3f ) < 0.002f && fabsf( gv( iRgb, Attr::Green ) - 0.6f ) < 0.002f && fabsf( gv( iRgb, Attr::Blue ) - 0.9f ) < 0.002f;
+			}
+			T( rgbSame, "RGB-Lampe: Farbe 1:1 in beiden Mischarten" );
+			//classic = the formula of 2.0 (R/G/B = colour, white = min, others 0) for many colours
+			s.colorMix = 0;
+			int bad = 0;
+			std::vector< std::pair< Attr, float > > tg;
+			for( int k = 0; k < 200; ++k )
+			{
+				const V3 c( ( k * 37 % 101 ) / 100.0f, ( k * 61 % 101 ) / 100.0f, ( k * 83 % 101 ) / 100.0f );
+				for( int id : { iRgbw, iRgba } )
+				{
+					s.ColorTargets( F( id ), c, tg );
+					for( auto& p : tg )
+					{
+						float want = 0;
+						if( p.first == Attr::Red ) want = c.x;
+						else if( p.first == Attr::Green ) want = c.y;
+						else if( p.first == Attr::Blue ) want = c.z;
+						else if( p.first == Attr::White ) want = std::min( { c.x, c.y, c.z } );
+						if( fabsf( p.second - want ) > 1e-5f ) ++bad;
+					}
+				}
+			}
+			T( bad == 0, "Klassische Mischung = Formel von 2.0 (200 Farben, RGBW + RGBWAUV): %d Abweichungen", bad );
+			//auto: pastel on RGBW uses white, keeps the hue, full brightness
+			s.colorMix = 1;
+			s.SetColor( F( iRgbw ), V3( 1, 0.6f, 0.6f ) );
+			const float w = gv( iRgbw, Attr::White ), r = gv( iRgbw, Attr::Red ), g = gv( iRgbw, Attr::Green );
+			const V3 back = s.GetColor( F( iRgbw ) );
+			T( w > 0.4f && g < 0.5f && r > 0.95f && close3( back, V3( 1, 0.6f, 0.6f ), 0.04f ), "RGBW Pastell (1/.6/.6): W %.2f R %.2f G %.2f, Farbton zurück %.2f/%.2f/%.2f", w, r, g, back.x, back.y, back.z );
+			s.SetColor( F( iRgbw ), V3( 1, 1, 1 ) );
+			T( gv( iRgbw, Attr::White ) > 0.9f && gv( iRgbw, Attr::Red ) > 0.85f && gv( iRgbw, Attr::Blue ) > 0.85f, "RGBW Weiß: alle Emitter voll (W %.2f R %.2f B %.2f)", gv( iRgbw, Attr::White ), gv( iRgbw, Attr::Red ), gv( iRgbw, Attr::Blue ) );
+			s.SetColor( F( iRgbw ), V3( 0.5f, 0.25f, 0.25f ) );
+			const float pk = std::max( { gv( iRgbw, Attr::Red ), gv( iRgbw, Attr::White ), gv( iRgbw, Attr::Green ) } );
+			T( fabsf( pk - 0.5f ) < 0.01f, "Helligkeit bleibt: halbe Farbe -> hellster Emitter %.2f", pk );
+			//auto: orange uses amber, UV stays untouched
+			s.SetAttr( F( iRgba ), Attr::UV, 0.7f );
+			s.SetColor( F( iRgba ), V3( 1, 0.5f, 0 ) );
+			const V3 ob = s.GetColor( F( iRgba ) );
+			T( gv( iRgba, Attr::Amber ) > 0.5f && fabsf( gv( iRgba, Attr::UV ) - 0.7f ) < 0.01f && close3( ob, V3( 1, 0.5f, 0 ), 0.06f ), "RGBWAUV Orange: Amber %.2f, UV bleibt %.2f, Farbton %.2f/%.2f/%.2f", gv( iRgba, Attr::Amber ), gv( iRgba, Attr::UV ), ob.x, ob.y, ob.z );
+			//primaries stay pure
+			s.SetColor( F( iRgba ), V3( 0, 0, 1 ) );
+			T( gv( iRgba, Attr::Blue ) > 0.99f && gv( iRgba, Attr::Red ) < 0.01f && gv( iRgba, Attr::White ) < 0.01f && gv( iRgba, Attr::Amber ) < 0.01f, "Reines Blau bleibt reines Blau" );
+			//colour wheel
+			std::string nr, nw, nb;
+			s.SetColor( F( iSpot ), V3( 1, 0, 0 ) );
+			const V3 cr = s.GetColor( F( iSpot ) );
+			s.WheelValueFor( F( iSpot ), V3( 1, 0, 0 ), &nr );
+			s.SetColor( F( iSpot ), V3( 0.1f, 0.2f, 1 ) );
+			const V3 cb = s.GetColor( F( iSpot ) );
+			s.SetColor( F( iSpot ), V3( 1, 1, 1 ) );
+			const V3 cw = s.GetColor( F( iSpot ) );
+			s.WheelValueFor( F( iSpot ), V3( 1, 1, 1 ), &nw );
+			T( cr.x > 0.9f && cr.y < 0.2f && cb.z > 0.9f && cb.x < 0.3f && cw.x > 0.99f && cw.y > 0.99f && cw.z > 0.99f && nw == "Open" && s.HasColor( F( iSpot ) ),
+			   "Farbrad: Rot -> %s (%.2f/%.2f/%.2f), Blau -> %.2f/%.2f/%.2f, Weiß -> %s", nr.c_str(), cr.x, cr.y, cr.z, cb.x, cb.y, cb.z, nw.c_str() );
+			//group colour on a mixed group: every lamp shows the hue
+			GroupFader gf;
+			gf.name     = "Farbe";
+			gf.kind     = 1;
+			gf.fixtures = { iRgb, iRgbw, iRgba, iSpot };
+			gf.hue      = 0.33f;
+			gf.sat      = 1;
+			gf.value    = 1;
+			s.groups.push_back( gf );
+			s.ApplyGroup( (int)s.groups.size() - 1 );
+			const V3 want = Hsv( 0.33f, 1, 1 );
+			int ok = 0;
+			for( int id : { iRgb, iRgbw, iRgba } ) ok += close3( s.GetColor( F( id ) ), want, 0.08f );
+			const V3 sg = s.GetColor( F( iSpot ) );
+			ok += sg.y > 0.8f && sg.x < 0.4f && sg.z < 0.5f;
+			T( ok == 4, "Gruppenfarbe Grün auf RGB, RGBW, RGBWAUV und Farbrad: %d/4 grün (Farbrad %.2f/%.2f/%.2f)", ok, sg.x, sg.y, sg.z );
+			s.groups.pop_back();
+			//palette fits a wheel lamp and sets its slot
+			Palette pr;
+			pr.uid   = s.NewPaletteUid();
+			pr.name  = "Rot";
+			pr.color = V3( 1, 0, 0 );
+			s.palettes.push_back( pr );
+			const int nAp = s.ApplyPalette( pr.uid, { iSpot } );
+			const V3 cp   = s.GetColor( F( iSpot ) );
+			T( nAp == 1 && cp.x > 0.9f && cp.y < 0.2f, "Farbpalette auf Farbrad-Lampe: Slot rot" );
+			s.palettes.pop_back();
+			//colour temperature
+			s.SetKelvin( F( iSpot ), 3200 );
+			const float cto32 = gv( iSpot, Attr::CTO );
+			s.SetKelvin( F( iSpot ), 6500 );
+			const float cto65 = gv( iSpot, Attr::CTO );
+			s.SetKelvin( F( iWc ), 2700 );
+			const float ww27 = gv( iWc, Attr::WarmWhite ), cw27 = gv( iWc, Attr::ColdWhite );
+			s.SetKelvin( F( iWc ), 6500 );
+			const float ww65 = gv( iWc, Attr::WarmWhite ), cw65 = gv( iWc, Attr::ColdWhite );
+			s.SetColor( F( iRgb ), V3( 1, 1, 1 ) );
+			s.SetKelvin( F( iRgb ), 3000 );
+			const float kr = gv( iRgb, Attr::Red ), kg = gv( iRgb, Attr::Green ), kb = gv( iRgb, Attr::Blue );
+			T( cto32 > 0.95f && cto65 < 0.05f && ww27 > 0.99f && cw27 < 0.01f && cw65 > 0.99f && ww65 < 0.01f && kr > 0.99f && kg < kr && kb < kg && s.HasKelvin( F( iWc ) ),
+			   "Farbtemperatur: CTO 3200 K %.2f / 6500 K %.2f, Warm/Kalt 2700 K %.2f/%.2f, 6500 K %.2f/%.2f, RGB 3000 K %.2f/%.2f/%.2f", cto32, cto65, ww27, cw27, ww65, cw65, kr, kg, kb );
+			//2.1 pan / tilt in degrees: OSC pan_deg / tilt_deg, kelvin via OSC
+			{
+				auto osc = [ & ]( const std::string& adr, float v, bool isInt ) { OscMsg om; om.address = adr; om.f = { v }; om.isInt = { isInt }; return ApplyOsc( s, om ); };
+				const std::string base = "/ls/fixture/" + std::to_string( iSpot ) + "/";
+				const bool o1 = osc( base + "pan_deg", 90, false ), o2 = osc( base + "tilt_deg", -45, false );
+				const float pd = s.GetAttrDeg( F( iSpot ), Attr::Pan ), td = s.GetAttrDeg( F( iSpot ), Attr::Tilt );
+				const float pr = s.AttrRangeDeg( F( iSpot ), Attr::Pan );
+				s.SetAttrDeg( F( iSpot ), Attr::Pan, -pr * 0.5f );
+				const float pmin = s.GetAttr( F( iSpot ), Attr::Pan );
+				const bool o3 = osc( "/ls/fixture/" + std::to_string( iWc ) + "/kelvin", 2700, true );
+				T( o1 && o2 && o3 && fabsf( pd - 90 ) < 0.1f && fabsf( td + 45 ) < 0.1f && pmin < 0.001f && s.GetAttr( F( iWc ), Attr::WarmWhite ) > 0.99f,
+				   "Pan/Tilt in Grad: OSC pan_deg 90 -> %.1f°, tilt_deg -45 -> %.1f°, -%.0f° = Anschlag; OSC kelvin 2700 -> Warmweiß", pd, td, pr * 0.5f );
+			}
+			//file: saved, and shows without the key (before 2.1) load classic
+			Json j = s.ToJson();
+			const bool saved = j.Find( "colorMix" ) && j[ "colorMix" ].I( -1 ) == 1;
+			for( size_t k = 0; k < j.o.size(); ++k )
+				if( j.o[ k ].first == "colorMix" ) { j.o.erase( j.o.begin() + k ); break; }
+			std::string err;
+			const bool ld = s.FromJson( j, app.lib, "", &err );
+			T( saved && ld && s.colorMix == 0, "Show-Datei: Farbmischung gespeichert, Shows vor 2.1 laden klassisch (%s)", err.c_str() );
+			//speed
+			const double t0 = Now();
+			for( int k = 0; k < 20000; ++k ) s.ColorTargets( F( iRgba ), V3( ( k % 7 ) / 6.0f, ( k % 5 ) / 4.0f, ( k % 3 ) / 2.0f ), tg );
+			s.colorMix = 1;
+			for( int k = 0; k < 20000; ++k ) s.ColorTargets( F( iRgba ), V3( ( k % 7 ) / 6.0f, ( k % 5 ) / 4.0f, ( k % 3 ) / 2.0f ), tg );
+			const double ms = ( Now() - t0 ) * 1000.0;
+			T( ms < 40, "Farbmischung schnell: 40000 Aufrufe in %.1f ms", ms );
+		}
+		app.NewShow();
+	}
+	//---- 2.1 quality "high": renders without GL errors, looks different from normal, bounded cost
+	{
+		app.BuildDemo();
+		Run( app, 2.0f );
+		const bool offByDefault = !s.stage.floorSurf.reflect && !s.stage.deckSurf.reflect;
+		s.stage.floorSurf = { true, 0.7f, 0.85f };//reflections are per surface (off by default)
+		s.stage.deckSurf  = { true, 0.5f, 0.4f };
+		{
+			Json j = s.ToJson();
+			Show tmp;
+			std::string e;
+			tmp.FromJson( j, app.lib, "", &e );
+			Json o = j;
+			Json& stj = const_cast< Json& >( o[ "stage" ] );
+			for( size_t k = 0; k < stj.o.size(); ++k )
+				if( stj.o[ k ].first == "floorSurf" ) { stj.o.erase( stj.o.begin() + k ); break; }
+			Show old;
+			old.FromJson( o, app.lib, "", &e );
+			T( offByDefault && tmp.stage.floorSurf.reflect && fabsf( tmp.stage.floorSurf.gloss - 0.85f ) < 1e-4f && fabsf( tmp.stage.deckSurf.amount - 0.5f ) < 1e-4f && !old.stage.floorSurf.reflect,
+			   "Spiegelung pro Fläche: Standard aus, Boden/Podest gespeichert, Shows ohne Angabe ohne Spiegelung" );
+		}
+		std::vector< uint8_t > pn, ph;
+		auto shot = [ & ]( bool high, const std::string& file, std::vector< uint8_t >& px ) {
+			app.ren.quality      = Renderer::Quality();
+			app.ren.quality.high = high;
+			SavePng( app, dir + file, 1280, 720 );//also warms up (shadow array, buffers)
+			int W = 0, H = 0;
+			app.ren.ReadOutput( px, W, H );
+			glFinish();
+			const double t0 = Now();
+			for( int i = 0; i < 6; ++i ) app.RenderViewport( 1280, 720 );
+			glFinish();
+			return ( Now() - t0 ) / 6 * 1000.0;
+		};
+		while( glGetError() != GL_NO_ERROR ) {}
+		const double tn = shot( false, "\\selftest_quality_normal.png", pn );
+		const double th = shot( true, "\\selftest_quality_high.png", ph );
+		const GLenum ge = glGetError();
+		int diff = 0;
+		for( size_t i = 0; i + 2 < pn.size() && i + 2 < ph.size(); i += 4 )
+			if( abs( pn[ i ] - ph[ i ] ) + abs( pn[ i + 1 ] - ph[ i + 1 ] ) + abs( pn[ i + 2 ] - ph[ i + 2 ] ) > 12 ) ++diff;
+		const float share = pn.empty() ? 0 : diff * 400.0f / pn.size();
+		app.ren.quality = Renderer::Quality();
+		app.RenderViewport( 640, 360 );//back to the normal shadow array
+		T( ge == GL_NO_ERROR && pn.size() == ph.size() && share > 2.0f, "Qualität Hoch rendert (kein GL-Fehler), sichtbar anders als Normal: %.1f %% der Pixel", share );
+		T( th < tn * 4.0 + 10.0, "Qualität Hoch kostet begrenzt: Normal %.1f ms, Hoch %.1f ms je Bild (1280x720)", tn, th );
+	}
+	//---- 16 universes: patch, output addressing, show file round trip
+	{
+		app.NewShow();
+		while( (int)s.universes.size() < 16 ) s.AddUniverse();
+		const FixtureDef* par = app.lib.Find( "generic/generic/led-par-rgbw" );
+		FixtureInst* f16      = par ? app.AddFixture( par, 0, 16, 505, V3( 0, 6, 0 ), V3( 180, 0, 0 ), "" ) : nullptr;
+		const int id16        = f16 ? f16->id : -1;
+		if( f16 ) s.SetAttr( *f16, Attr::Dimmer, 1 );
+		std::set< int > ports;
+		for( auto& u : s.universes ) ports.insert( u.artnetPort );
+		const DmxFrame* fr = s.Frame( 16 );
+		const bool dmxOk   = fr && ( *fr )[ 504 ] == 255;
+		uint8_t cid[ 16 ]  = {};
+		const auto pk      = BuildE131( 16, 1, 100, cid, "LS", fr ? fr->data() : nullptr, 512 );
+		int un = 0, pr = 0, ln = 0;
+		const uint8_t* dp = nullptr;
+		const bool sacnOk = fr && ParseE131( pk.data(), (int)pk.size(), un, pr, dp, ln ) && un == 16 && ln == 512 && dp[ 504 ] == 255;
+		Json j = s.ToJson();
+		std::string err;
+		const bool ld = s.FromJson( j, app.lib, "", &err );
+		const FixtureInst* back = s.FindFixture( id16 );
+		T( (int)s.universes.size() == 16 && ports.size() == 16 && dmxOk && sacnOk && ld && back && back->universe == 16 && back->address == 505,
+		   "16 Universes: Lampe auf 16.505, Art-Net-Ports eindeutig (%d), sACN Universe 16, Show-Datei behält alles", (int)ports.size() );
+		app.NewShow();
 	}
 	//---- language (UI texts German -> English)
 	{

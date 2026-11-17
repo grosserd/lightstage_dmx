@@ -5,6 +5,7 @@
 
 namespace ls
 {
+bool SnapFadeable( Attr a );
 //================================================================ tempo
 float TempoBpm( const Tempo& t )
 {
@@ -405,7 +406,7 @@ bool FxSupports( const Show& show, const FixtureInst& f, const Effect& e )
 	switch( e.kind )
 	{
 	case FxKind::Dimmer: return show.HasAttr( f, Attr::Dimmer ) || show.HasAttr( f, Attr::Red ) || show.HasAttr( f, Attr::White ) || show.HasAttr( f, Attr::Cyan );
-	case FxKind::Color: return show.HasAttr( f, Attr::Red ) || show.HasAttr( f, Attr::Cyan );
+	case FxKind::Color: return show.HasColor( f );
 	case FxKind::Position: return show.HasAttr( f, Attr::Pan ) || show.HasAttr( f, Attr::Tilt );
 	case FxKind::Attribute: return show.HasAttr( f, e.attr );
 	default: break;
@@ -855,28 +856,17 @@ static void ApplyEffect( Show& show, Effect& e )
 		case FxKind::Color:
 		{
 			const V3 c = PaletteColor( e, t );
-			if( f.def->subtractive || ( !show.HasAttr( f, Attr::Red ) && show.HasAttr( f, Attr::Cyan ) ) )
+			static thread_local std::vector< std::pair< Attr, float > > tg;
+			show.ColorTargets( f, c, tg );
+			for( auto& p : tg )
 			{
-				const Attr cmy[ 3 ] = { Attr::Cyan, Attr::Magenta, Attr::Yellow };
-				for( int ci = 0; ci < 3; ++ci ) show.FxSetAttr( f, cmy[ ci ], Lerp( show.GetAttrLayer( f, cmy[ ci ], el.head ), 1 - c[ ci ], k ), el.head );
-			}
-			else
-			{
-				const float w = std::min( { c.x, c.y, c.z } );
-				for( Attr a : kColorAttrs )
+				if( !SnapFadeable( p.first ) || p.first == Attr::CTO )//wheel, macro, CTO: switch half way
 				{
-					if( !show.HasAttr( f, a ) ) continue;
-					float target = 0;
-					if( a == Attr::Red ) target = c.x;
-					else if( a == Attr::Green ) target = c.y;
-					else if( a == Attr::Blue ) target = c.z;
-					else if( a == Attr::White ) target = w;
-					else if( a == Attr::Cyan || a == Attr::Magenta || a == Attr::Yellow ) continue;
-					show.FxSetAttr( f, a, Lerp( show.GetAttrLayer( f, a, el.head ), target, k ), el.head );
+					if( k > 0.5f ) show.FxSetAttr( f, p.first, p.second, el.head );
 				}
+				else
+					show.FxSetAttr( f, p.first, Lerp( show.GetAttrLayer( f, p.first, el.head ), p.second, k ), el.head );
 			}
-			for( Attr a : { Attr::ColorWheel, Attr::ColorMacro, Attr::CTO } )
-				if( show.HasAttr( f, a ) && k > 0.5f ) show.FxSetAttr( f, a, 0, el.head );
 			break;
 		}
 		case FxKind::Position:
@@ -980,7 +970,12 @@ bool RunEffects( Show& show, double dt )
 			else e.syncBeat = beat;
 		}
 		e.lastTempo = beat;
-		if( e.Drive() > 0 && e.level > 0 ) any = true;
+		if( e.id == show.fxForceId )//Lightshow export: effect layer "on" - full drive on all its lamps, no fade
+		{
+			e.cur   = 1;
+			e.snapW = -1;
+		}
+		if( e.id != show.fxMuteId && e.Drive() > 0 && e.level > 0 ) any = true;
 	}
 	bool sub = false;
 	for( auto& g : show.groups )
@@ -1002,7 +997,7 @@ bool RunEffects( Show& show, double dt )
 		else show.fxOut[ u ].fill( -1 );
 	}
 	for( auto& e : show.effects )
-		if( e.Drive() > 0 && e.level > 0 ) ApplyEffect( show, e );
+		if( e.id != show.fxMuteId && e.Drive() > 0 && e.level > 0 ) ApplyEffect( show, e );
 	if( sub ) ApplySubmasters( show );
 	show.fxAny = true;
 	++show.dmxVersion;

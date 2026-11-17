@@ -148,6 +148,18 @@ Json SceneJson( Show& s, const LbxJob& j )
 			}
 		o.Set( "intensity", inten );
 		o.Set( "emitters", inten.Size() ? Json::Arr() : emit );
+		//patch overview for players: profile, mode, name + attribute of every DMX slot
+		o.Set( "profile", f.def ? ( f.def->manufacturer.empty() ? f.def->name : f.def->manufacturer + " " + f.def->name ) : std::string() );
+		o.Set( "mode", m ? m->name : std::string() );
+		Json chn = Json::Arr(), cha = Json::Arr();
+		if( m )
+			for( auto& c : m->ch )
+			{
+				chn.Push( c.name.empty() ? std::string( AttrName( c.attr ) ) : c.name );
+				cha.Push( AttrName( c.attr ) );
+			}
+		o.Set( "channels", chn );
+		o.Set( "attrs", cha );
 		o.Set( "pos", V3J( f.pos ) );
 		const M4 b = FixtureBase( f );
 		Json ax    = Json::Arr();
@@ -179,6 +191,40 @@ Json SceneJson( Show& s, const LbxJob& j )
 		Json ids = Json::Arr();
 		for( int id : g.fixtures ) ids.Push( id );
 		o.Set( "fixtures", ids );
+		//function of the fader (players apply it live): kind 0 attribute / 1 colour, mode 1 = dimmer submaster
+		o.Set( "kind", g.kind );
+		o.Set( "attr", AttrName( g.attr ) );
+		o.Set( "mode", g.Submaster() ? 1 : 0 );
+		o.Set( "value", g.value );
+		o.Set( "hue", g.hue );
+		o.Set( "sat", g.sat );
+		//DMX slots the fader writes: [universe, coarse, fine (-1), attribute] (address 0-based in the universe)
+		static const Attr colorAttrs[] = { Attr::Red, Attr::Green, Attr::Blue, Attr::Cyan, Attr::Magenta, Attr::Yellow, Attr::White, Attr::WarmWhite, Attr::ColdWhite, Attr::Amber, Attr::UV, Attr::Lime, Attr::Indigo };
+		Json tg = Json::Arr();
+		for( int id : g.fixtures )
+		{
+			const FixtureInst* f = s.FindFixture( id );
+			const Mode* m        = f ? f->M() : nullptr;
+			if( !m ) continue;
+			for( int c = 0; c < (int)m->ch.size(); ++c )
+			{
+				const Channel& ch = m->ch[ c ];
+				if( ch.isFine ) continue;
+				bool want = false;
+				if( g.kind == 1 )
+					for( Attr a : colorAttrs ) want = want || ch.attr == a;
+				else
+					want = ch.attr == g.attr;
+				if( !want ) continue;
+				Json t = Json::Arr();
+				t.Push( f->universe );
+				t.Push( f->address - 1 + c );
+				t.Push( ch.fine >= 0 ? f->address - 1 + ch.fine : -1 );
+				t.Push( AttrName( ch.attr ) );
+				tg.Push( t );
+			}
+		}
+		o.Set( "targets", tg );
 		gr.Push( o );
 	}
 	root.Set( "groups", gr );
@@ -291,6 +337,237 @@ std::vector< uint8_t > Stream( int frames, int frameBytes, int keyEvery, const s
 	return o;
 }
 
+//---------------------------------------------------------------- effect layers
+void SaveState( Show& s, LbxState& t )
+{
+	{
+		std::lock_guard< std::mutex > l( s.dmxLock );
+		t.dmx     = s.dmx;
+		t.fxOut   = s.fxOut;
+		t.snapOut = s.snapOut;
+	}
+	t.fxAny     = s.fxAny;
+	t.snapAny   = s.snapAny;
+	t.snapSeq   = s.snapSeq;
+	t.grpSeq    = s.grpSeq;
+	t.progSeq   = s.progSeq;
+	t.effects   = s.effects;
+	t.snapshots = s.snapshots;
+	t.groups    = s.groups;
+	t.tempo     = s.tempo;
+	t.cueCur    = s.cueCur;
+	t.cueT      = s.cueT;
+	t.tlrt      = s.tl.rt;
+	t.st.clear();
+	for( auto& f : s.fixtures ) t.st.push_back( f.st );
+}
+void RestoreState( Show& s, const LbxState& t )
+{
+	{
+		std::lock_guard< std::mutex > l( s.dmxLock );
+		s.dmx     = t.dmx;
+		s.fxOut   = t.fxOut;
+		s.snapOut = t.snapOut;
+	}
+	s.fxAny     = t.fxAny;
+	s.snapAny   = t.snapAny;
+	s.snapSeq   = t.snapSeq;
+	s.grpSeq    = t.grpSeq;
+	s.progSeq   = t.progSeq;
+	s.effects   = t.effects;
+	s.snapshots = t.snapshots;
+	s.groups    = t.groups;
+	s.tempo     = t.tempo;
+	s.cueCur    = t.cueCur;
+	s.cueT      = t.cueT;
+	s.tl.rt     = t.tlrt;
+	for( size_t i = 0; i < s.fixtures.size() && i < t.st.size(); ++i ) s.fixtures[ i ].st = t.st[ i ];
+}
+//decodes the next frame of an encoded stream body (EncodeFrame format) into cur
+bool DecodeNext( const std::vector< uint8_t >& d, size_t& at, std::vector< uint8_t >& cur )
+{
+	if( at >= d.size() ) return false;
+	const uint8_t t = d[ at++ ];
+	if( t == 0 ) return true;
+	if( t == 1 )
+	{
+		if( at + cur.size() > d.size() ) return false;
+		memcpy( cur.data(), d.data() + at, cur.size() );
+		at += cur.size();
+		return true;
+	}
+	if( t != 2 || at + 2 > d.size() ) return false;
+	const int runs = Get16( d.data() + at );
+	at += 2;
+	for( int r = 0; r < runs; ++r )
+	{
+		if( at + 6 > d.size() ) return false;
+		const uint32_t a = Get32( d.data() + at );
+		const uint16_t l = Get16( d.data() + at + 4 );
+		at += 6;
+		if( (size_t)a + l > cur.size() || at + l > d.size() ) return false;
+		memcpy( cur.data() + a, d.data() + at, l );
+		at += l;
+	}
+	return true;
+}
+void PutDelta( std::vector< uint8_t >& o, size_t i, int v )
+{
+	v        = std::min( 32767, std::max( -32767, v ) );
+	o[ i ]     = (uint8_t)( v & 0xFF );
+	o[ i + 1 ] = (uint8_t)( ( v >> 8 ) & 0xFF );
+}
+int16_t I16( const uint8_t* p ) { return (int16_t)( p[ 0 ] | ( p[ 1 ] << 8 ) ); }
+
+//starts the pass of layer j.layer: same start state, same locate as the main pass, effect muted / forced
+void StartLayer( Show& s, LbxJob& j )
+{
+	LbxLayer& L = j.layers[ j.layer ];
+	RestoreState( s, j.start );
+	s.fxMuteId  = L.on ? 0 : L.fx;
+	s.fxForceId = L.on ? L.fx : 0;
+	s.tl.Locate( s, j.o.from );
+	s.tl.Play( s, true );
+	RunEffects( s, 1e-6 );
+	j.layerFrame = 0;
+	j.mainAt     = 0;
+	j.mainVisAt  = 0;
+	j.mainCur.assign( j.dmxBytes, 0 );
+	j.mainVisCur.assign( j.visBytes, 0 );
+}
+//after the main pass: which layers to compute (false = none)
+bool PlanLayers( Show& s, LbxJob& j )
+{
+	j.layers.clear();
+	if( !j.o.fxLayers ) return false;
+	for( size_t i = 0; i < s.effects.size(); ++i )
+	{
+		const Effect& e = s.effects[ i ];
+		if( e.level <= 0 ) continue;
+		if( i < j.fxActive.size() && !j.fxActive[ i ].empty() )
+		{
+			LbxLayer off;
+			off.fx = e.id;
+			j.layers.push_back( off );
+		}
+		LbxLayer on;
+		on.fx = e.id;
+		on.on = true;
+		j.layers.push_back( on );
+	}
+	if( j.layers.empty() ) return false;
+	//VIS field layout: u8 intensity, r, g, b · i16 origin x y z · i16 dir x y z · u8 zoom · heads × u8 r g b
+	j.visKind.assign( j.visBytes, 0 );
+	for( size_t i = 0; i < j.visOff.size(); ++i )
+		for( int k = 0; k < 6; ++k )
+		{
+			const size_t at = (size_t)j.visOff[ i ] + 4 + 2 * k;
+			if( at + 1 < j.visKind.size() ) { j.visKind[ at ] = 1; j.visKind[ at + 1 ] = 2; }
+		}
+	j.layer = 0;
+	StartLayer( s, j );
+	return true;
+}
+//one frame of the running layer pass
+void LayerFrame( Show& s, SimGlobals& sim, LbxJob& j )
+{
+	LbxLayer& L      = j.layers[ j.layer ];
+	const float frame = 1.0f / j.o.fps;
+	const int sub     = std::max( 1, j.o.substeps );
+	const float dt    = frame / sub;
+	if( j.layerFrame > 0 )
+		for( int k = 0; k < sub; ++k )
+		{
+			s.tempo.beat += dt * std::max( 1.0f, s.tempo.bpm ) / 60.0;
+			RunEffects( s, dt );
+		}
+	const bool key = j.layerFrame % j.o.fps == 0;
+	std::vector< uint8_t > cur, d;
+	CaptureDmx( s, cur );
+	DecodeNext( j.dmxData, j.mainAt, j.mainCur );
+	d.assign( 2 * (size_t)j.dmxBytes, 0 );
+	for( int c = 0; c < j.dmxBytes; ++c )
+	{
+		const int v = (int)cur[ c ] - (int)j.mainCur[ c ];
+		if( v ) { PutDelta( d, 2 * (size_t)c, v ); L.any = true; }
+	}
+	if( key ) L.dmxKeys.push_back( (uint32_t)L.dmxData.size() );
+	EncodeFrame( L.prevDmx, d, key, L.dmxData );
+	L.prevDmx.swap( d );
+	if( j.visBytes > 0 )
+	{
+		if( j.layerFrame > 0 ) Simulate( s, sim, frame );
+		else
+			for( int k = 0; k < 120; ++k ) Simulate( s, sim, 1.0f / 60.0f );
+		CaptureVis( s, j, cur );
+		DecodeNext( j.visData, j.mainVisAt, j.mainVisCur );
+		d.assign( 2 * (size_t)j.visBytes, 0 );
+		for( int b = 0; b < j.visBytes; ++b )
+		{
+			int v = 0;
+			if( j.visKind[ b ] == 0 ) v = (int)cur[ b ] - (int)j.mainVisCur[ b ];
+			else if( j.visKind[ b ] == 1 ) v = (int)I16( cur.data() + b ) - (int)I16( j.mainVisCur.data() + b );
+			if( v ) { PutDelta( d, 2 * (size_t)b, v ); L.any = true; }
+		}
+		if( key ) L.visKeys.push_back( (uint32_t)L.visData.size() );
+		EncodeFrame( L.prevVis, d, key, L.visData );
+		L.prevVis.swap( d );
+	}
+	++j.layerFrame;
+}
+Json EffectsJson( Show& s, const LbxJob& j )
+{
+	static const char* types[] = { "chase", "wave", "strobe", "sparkle", "colorchange", "colorfade", "rainbow", "movement", "beam", "lfo", "sequencer", "envelope", "intensity", "colour" };
+	Json root = Json::Obj();
+	Json arr  = Json::Arr();
+	for( size_t i = 0; i < s.effects.size(); ++i )
+	{
+		const Effect& e = s.effects[ i ];
+		Json o          = Json::Obj();
+		o.Set( "id", e.id );
+		o.Set( "name", e.name );
+		o.Set( "type", types[ std::min( (int)e.type, (int)FxType::Count - 1 ) ] );
+		o.Set( "label", FxTypeName( e.type ) );
+		o.Set( "color", V3J( FxTypeColor( e.type ) ) );
+		Json ids = Json::Arr();
+		for( int id : FxFixtureIds( s, e ) ) ids.Push( id );
+		o.Set( "fixtures", ids );
+		Json act = Json::Arr();
+		int n    = 0;
+		if( i < j.fxActive.size() )
+			for( auto& r : j.fxActive[ i ] )
+			{
+				Json p = Json::Arr();
+				p.Push( (double)r.first / j.o.fps );
+				p.Push( (double)( r.second + 1 ) / j.o.fps );
+				act.Push( p );
+				n += r.second - r.first + 1;
+			}
+		o.Set( "active", act );
+		o.Set( "share", j.frames > 0 ? (double)n / j.frames : 0.0 );
+		bool off = false, on = false;
+		for( auto& L : j.layers )
+			if( L.fx == e.id && L.any ) ( L.on ? on : off ) = true;
+		o.Set( "off", off );
+		o.Set( "on", on );
+		arr.Push( o );
+	}
+	root.Set( "effects", arr );
+	return root;
+}
+std::vector< uint8_t > LayerChunk( const LbxLayer& L, int frames, int frameBytes, int keyEvery, const std::vector< uint32_t >& keys, const std::vector< uint8_t >& data )
+{
+	std::vector< uint8_t > o;
+	Put32( o, (uint32_t)L.fx );
+	o.push_back( L.on ? 1 : 0 );
+	o.push_back( 0 );
+	o.push_back( 0 );
+	o.push_back( 0 );
+	const std::vector< uint8_t > st = Stream( frames, frameBytes, keyEvery, keys, data );
+	o.insert( o.end(), st.begin(), st.end() );
+	return o;
+}
+
 bool DecodeStream( const uint8_t* p, size_t n, std::vector< std::vector< uint8_t > >& out, int* frameBytes, int* keyEvery, std::string* err )
 {
 	if( n < 16 ) { if( err ) *err = "stream too short"; return false; }
@@ -370,6 +647,9 @@ bool LbxBegin( Show& s, const LbxOptions& o, const std::string& path, LbxJob& j 
 		off += 17 + ( heads > 1 ? 3 * heads : 0 );
 	}
 	j.visBytes = j.o.visual ? off : 0;
+	SaveState( s, j.start );
+	j.fxActive.assign( s.effects.size(), {} );
+	s.fxMuteId = s.fxForceId = 0;
 	j.sync     = s.tl.sync;
 	j.playing  = s.tl.rt.playing;
 	j.pos      = s.tl.rt.pos;
@@ -394,13 +674,34 @@ bool LbxStep( Show& s, SimGlobals& sim, LbxJob& j, double budgetSec )
 	std::vector< uint8_t > cur;
 	do
 	{
-		if( j.frame >= j.frames ) return false;
+		if( j.layer >= 0 )
+		{
+			//effect layer passes
+			if( j.layerFrame >= j.frames )
+			{
+				if( ++j.layer >= (int)j.layers.size() ) return false;
+				StartLayer( s, j );
+			}
+			LayerFrame( s, sim, j );
+			continue;
+		}
+		if( j.frame >= j.frames ) return PlanLayers( s, j );
+		if( j.frame == 0 ) j.start.sim = sim;
 		if( j.frame > 0 )
 			for( int k = 0; k < sub; ++k )
 			{
 				s.tempo.beat += dt * std::max( 1.0f, s.tempo.bpm ) / 60.0;
 				RunEffects( s, dt );
 			}
+		//which effects drive in this frame (EFFX: "active")
+		for( size_t i = 0; i < s.effects.size() && i < j.fxActive.size(); ++i )
+		{
+			const Effect& e = s.effects[ i ];
+			if( !( e.Drive() > 0 && e.level > 0 ) ) continue;
+			auto& r = j.fxActive[ i ];
+			if( !r.empty() && r.back().second == j.frame - 1 ) r.back().second = j.frame;
+			else r.push_back( { j.frame, j.frame } );
+		}
 		const bool key = j.frame % j.o.fps == 0;
 		CaptureDmx( s, cur );
 		if( key ) j.dmxKeys.push_back( (uint32_t)j.dmxData.size() );
@@ -419,20 +720,22 @@ bool LbxStep( Show& s, SimGlobals& sim, LbxJob& j, double budgetSec )
 		}
 		++j.frame;
 	} while( (double)clock() / CLOCKS_PER_SEC - t0 < budgetSec );
-	return j.frame < j.frames;
+	return true;
 }
 
 bool LbxFinish( Show& s, LbxJob& j, bool ok )
 {
 	if( !j.active ) return false;
 	j.active = false;
+	s.fxMuteId = s.fxForceId = 0;
+	RestoreState( s, j.start );//effects, snapshots, tempo ... as before the export (also after the layer passes)
 	s.tl.Play( s, false );
 	s.tl.sync = j.sync;
 	s.tl.loop = j.loop;
 	s.tl.Locate( s, j.pos );
 	s.tl.rt.pos = j.pos;
 	s.tl.Play( s, j.playing );
-	if( !ok || j.frame < j.frames )
+	if( !ok || j.frame < j.frames || ( j.layer >= 0 && ( j.layer < (int)j.layers.size() - 1 || j.layerFrame < j.frames ) ) )
 	{
 		if( j.err.empty() ) j.err = "abgebrochen";
 		return false;
@@ -440,7 +743,7 @@ bool LbxFinish( Show& s, LbxJob& j, bool ok )
 	Json info = Json::Obj();
 	info.Set( "format", "lightstage-lightshow" );
 	info.Set( "version", 1 );
-	info.Set( "app", "LightStage 2.0" );
+	info.Set( "app", "LightStage 2.1" );
 	std::string name = s.path.empty() ? j.path : s.path;//unsaved show: name of the export file
 	const size_t sl  = name.find_last_of( "\\/" );
 	if( sl != std::string::npos ) name = name.substr( sl + 1 );
@@ -496,6 +799,13 @@ bool LbxFinish( Show& s, LbxJob& j, bool ok )
 	Chunk( f, "PTCH", Bytes( WriteJson( PatchJson( s ), false ) ) ), ++chunks;
 	Chunk( f, "DMX0", Stream( j.frames, j.dmxBytes, j.o.fps, j.dmxKeys, j.dmxData ) ), ++chunks;
 	if( j.visBytes > 0 ) Chunk( f, "VIS0", Stream( j.frames, j.visBytes, j.o.fps, j.visKeys, j.visData ) ), ++chunks;
+	if( !s.effects.empty() ) Chunk( f, "EFFX", Bytes( WriteJson( EffectsJson( s, j ), false ) ) ), ++chunks;
+	for( auto& L : j.layers )
+	{
+		if( !L.any ) continue;//this layer changes nothing
+		Chunk( f, "FXLD", LayerChunk( L, j.frames, 2 * j.dmxBytes, j.o.fps, L.dmxKeys, L.dmxData ) ), ++chunks;
+		if( j.visBytes > 0 ) Chunk( f, "FXLV", LayerChunk( L, j.frames, 2 * j.visBytes, j.o.fps, L.visKeys, L.visData ) ), ++chunks;
+	}
 	Set32( f, cntAt, chunks );
 	FILE* fp = nullptr;
 	if( _wfopen_s( &fp, Widen( j.path ).c_str(), L"wb" ) != 0 || !fp )
@@ -548,11 +858,27 @@ bool LbxRead( const std::string& path, LbxFile& out, std::string* err )
 		if( at + sz > d.size() ) { if( err ) *err = "chunk " + id; return false; }
 		const uint8_t* p = d.data() + at;
 		std::string e;
-		if( id == "INFO" || id == "CUES" || id == "SCEN" || id == "PTCH" )
+		if( id == "INFO" || id == "CUES" || id == "SCEN" || id == "PTCH" || id == "EFFX" )
 		{
 			Json j;
 			if( !ParseJson( std::string( (const char*)p, sz ), j, &e ) ) { if( err ) *err = id + ": " + e; return false; }
-			( id == "INFO" ? out.info : id == "CUES" ? out.cues : id == "SCEN" ? out.scene : out.patch ) = j;
+			( id == "INFO" ? out.info : id == "CUES" ? out.cues : id == "SCEN" ? out.scene : id == "EFFX" ? out.effects : out.patch ) = j;
+		}
+		else if( ( id == "FXLD" || id == "FXLV" ) && sz >= 8 )
+		{
+			const int fxId  = (int)Get32( p );
+			const bool on   = p[ 4 ] != 0;
+			LbxFile::Layer* L = nullptr;
+			for( auto& x : out.layers )
+				if( x.fx == fxId && x.on == on ) L = &x;
+			if( !L )
+			{
+				out.layers.push_back( LbxFile::Layer() );
+				L     = &out.layers.back();
+				L->fx = fxId;
+				L->on = on;
+			}
+			if( !DecodeStream( p + 8, sz - 8, id == "FXLD" ? L->dmx : L->vis, nullptr, nullptr, &e ) ) { if( err ) *err = id + ": " + e; return false; }
 		}
 		else if( id == "DMX0" )
 		{

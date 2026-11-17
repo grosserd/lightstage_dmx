@@ -275,6 +275,12 @@ Json TimelineToJson( const Timeline& tl )
 		o.Set( "mute", t.mute );
 		o.Set( "solo", t.solo );
 		o.Set( "open", t.open );
+		if( !t.cuts.empty() )
+		{
+			Json cu = Json::Arr();
+			for( double x : t.cuts ) cu.Push( x );
+			o.Set( "cuts", cu );
+		}
 		o.Set( "level", t.level );
 		Json c = Json::Arr();
 		c.Push( t.color.x );
@@ -399,6 +405,7 @@ void TimelineFromJson( Timeline& tl, const Json& j )
 		t.mute  = o[ "mute" ].B( false );
 		t.solo  = o[ "solo" ].B( false );
 		t.open  = o[ "open" ].B( true );
+		for( auto& x : o[ "cuts" ].a ) t.cuts.push_back( x.Num() );
 		t.level = Saturate( o[ "level" ].F( 1 ) );
 		if( o[ "color" ].Size() == 3 ) t.color = V3( o[ "color" ][ 0 ].F(), o[ "color" ][ 1 ].F(), o[ "color" ][ 2 ].F() );
 		for( auto& lo : o[ "lanes" ].a )
@@ -764,34 +771,10 @@ void TimelineAdvance( Show& s, double dt )
 
 bool SnapFadeable( Attr a );
 
-//colour -> emitter levels of a lamp (like Show::SetColor)
+//colour -> channel levels of a lamp (Show::ColorTargets: RGB/W/A/L, CMY, colour wheel)
 static void ColorTargets( Show& s, const FixtureInst& f, const V3& c, std::vector< std::pair< Attr, float > >& out )
 {
-	out.clear();
-	if( !f.def ) return;
-	if( f.def->subtractive || ( !s.HasAttr( f, Attr::Red ) && s.HasAttr( f, Attr::Cyan ) ) )
-	{
-		out.push_back( { Attr::Cyan, 1 - c.x } );
-		out.push_back( { Attr::Magenta, 1 - c.y } );
-		out.push_back( { Attr::Yellow, 1 - c.z } );
-	}
-	else
-	{
-		const float w = std::min( { c.x, c.y, c.z } );
-		const Attr em[] = { Attr::Red, Attr::Green, Attr::Blue, Attr::White, Attr::WarmWhite, Attr::ColdWhite, Attr::Amber, Attr::UV, Attr::Lime, Attr::Indigo };
-		for( Attr a : em )
-		{
-			if( !s.HasAttr( f, a ) ) continue;
-			float t = 0;
-			if( a == Attr::Red ) t = c.x;
-			else if( a == Attr::Green ) t = c.y;
-			else if( a == Attr::Blue ) t = c.z;
-			else if( a == Attr::White ) t = w;
-			out.push_back( { a, t } );
-		}
-	}
-	for( Attr a : { Attr::ColorWheel, Attr::ColorMacro, Attr::CTO } )
-		if( s.HasAttr( f, a ) ) out.push_back( { a, 0.0f } );
+	s.ColorTargets( f, c, out );
 }
 
 void TimelineApply( Show& s )
@@ -981,20 +964,8 @@ float TlLiveValue( Show& s, const TlTrack& t, const TlLane& l, V3* col )
 		if( !f || !f->M() ) continue;
 		if( l.kind == TlLaneKind::Color )
 		{
-			V3 c( 1, 1, 1 );
-			if( s.HasAttr( *f, Attr::Red ) || s.HasAttr( *f, Attr::Green ) || s.HasAttr( *f, Attr::Blue ) )
-			{
-				c = V3( s.GetAttrBase( *f, Attr::Red ), s.GetAttrBase( *f, Attr::Green ), s.GetAttrBase( *f, Attr::Blue ) );
-				if( s.HasAttr( *f, Attr::White ) )
-				{
-					const float w = s.GetAttrBase( *f, Attr::White );
-					c             = V3( std::max( c.x, w ), std::max( c.y, w ), std::max( c.z, w ) );
-				}
-			}
-			else if( s.HasAttr( *f, Attr::Cyan ) )
-				c = V3( 1 - s.GetAttrBase( *f, Attr::Cyan ), 1 - s.GetAttrBase( *f, Attr::Magenta ), 1 - s.GetAttrBase( *f, Attr::Yellow ) );
-			else
-				continue;
+			if( !s.HasColor( *f ) ) continue;
+			const V3 c = s.GetColor( *f, -1, 1 );
 			if( col ) *col = c;
 			return std::max( { c.x, c.y, c.z } );
 		}
@@ -1019,5 +990,338 @@ std::vector< Attr > TlTrackAttrs( Show& s, const std::vector< int >& fixtures )
 		}
 	}
 	return out;
+}
+//================================================================ sections: blocks of a collapsed track
+static bool TlIn( double t, double a, double b ) { return t >= a - 1e-9 && t <= b + 1e-9; }
+static void TlKeyTimes( const TlTrack& t, std::vector< double >& ts )
+{
+	ts.clear();
+	for( auto& l : t.lanes )
+		for( auto& k : l.keys ) ts.push_back( k.t );
+	std::sort( ts.begin(), ts.end() );
+}
+//a cut is kept only while it separates two keys
+static void TlPruneCuts( TlTrack& t )
+{
+	std::vector< double > ts;
+	TlKeyTimes( t, ts );
+	std::sort( t.cuts.begin(), t.cuts.end() );
+	std::vector< double > keep;
+	for( double c : t.cuts )
+	{
+		auto it = std::lower_bound( ts.begin(), ts.end(), c - 1e-9 );//first key >= cut
+		if( it == ts.begin() || it == ts.end() ) continue;
+		if( !keep.empty() && c - keep.back() < 1e-7 ) continue;
+		keep.push_back( c );
+	}
+	t.cuts.swap( keep );
+}
+double TlBlockGap( const Timeline& tl )
+{
+	const double bar = 60.0 / std::max( 1.0f, tl.bpm ) * std::max( 1, tl.beatsPerBar );
+	return std::max( 1.0, 2 * bar );
+}
+void TlBlocks( const Timeline& tl, const TlTrack& t, std::vector< TlBlock >& out )
+{
+	out.clear();
+	std::vector< double > ts;
+	TlKeyTimes( t, ts );
+	if( ts.empty() ) return;
+	const double gap = TlBlockGap( tl );
+	TlBlock b;
+	b.t0 = b.t1 = ts[ 0 ];
+	b.keys      = 1;
+	for( size_t i = 1; i < ts.size(); ++i )
+	{
+		bool cut = ts[ i ] - ts[ i - 1 ] > gap + 1e-6;//keys exactly 2 bars apart stay together (rounding)
+		if( !cut )
+			for( double c : t.cuts )
+				if( c > ts[ i - 1 ] + 1e-9 && c <= ts[ i ] + 1e-9 ) { cut = true; break; }
+		if( cut )
+		{
+			out.push_back( b );
+			b.t0   = ts[ i ];
+			b.keys = 0;
+		}
+		b.t1 = ts[ i ];
+		++b.keys;
+	}
+	out.push_back( b );
+}
+void TlMoveBlocks( Timeline& tl, TlTrack& t, const std::vector< std::pair< double, double > >& src, double dt, bool copy )
+{
+	(void)tl;
+	if( src.empty() ) return;
+	double mn = 1e18;
+	for( auto& s : src ) mn = std::min( mn, s.first );
+	if( mn + dt < 0 ) dt = -mn;
+	if( fabs( dt ) < 1e-9 ) return;
+	auto inSrc = [ & ]( double x ) {
+		for( auto& s : src )
+			if( TlIn( x, s.first, s.second ) ) return true;
+		return false;
+	};
+	auto inDst = [ & ]( double x ) {
+		for( auto& s : src )
+			if( TlIn( x, s.first + dt, s.second + dt ) ) return true;
+		return false;
+	};
+	for( auto& l : t.lanes )
+	{
+		std::vector< TlKey > mv;
+		for( auto& k : l.keys )
+			if( inSrc( k.t ) ) mv.push_back( k );
+		if( !copy ) l.keys.erase( std::remove_if( l.keys.begin(), l.keys.end(), [ & ]( const TlKey& k ) { return inSrc( k.t ); } ), l.keys.end() );
+		l.keys.erase( std::remove_if( l.keys.begin(), l.keys.end(), [ & ]( const TlKey& k ) { return inDst( k.t ); } ), l.keys.end() );//the target is overwritten
+		for( auto& k : l.keys ) k.sel = false;
+		for( auto k : mv )
+		{
+			k.t += dt;
+			k.sel = true;
+			l.keys.push_back( k );
+		}
+		TlSort( l );
+	}
+	//the moved blocks stay blocks of their own next to their new neighbours (old cuts inside the target would split them)
+	t.cuts.erase( std::remove_if( t.cuts.begin(), t.cuts.end(), [ & ]( double c ) {
+		              for( auto& s : src )
+			              if( c > s.first + dt + 1e-9 && c < s.second + dt + 0.001 ) return true;
+		              return false;
+	              } ),
+	              t.cuts.end() );
+	for( auto& s : src )
+	{
+		t.cuts.push_back( s.first + dt );
+		t.cuts.push_back( s.second + dt + 0.0005 );//behind the last key (0.5 ms: survives the 9 digits of the file format)
+	}
+	TlPruneCuts( t );
+}
+//value / colour / curve type of a lane at x (the curve type of the segment x lies in)
+static void TlAt( const TlLane& l, double x, float& v, V3& c, TlInterp& ip )
+{
+	v  = TlEval( l, x );
+	c  = l.kind == TlLaneKind::Color ? TlEvalColor( l, x ) : V3( 1, 1, 1 );
+	ip = TlInterp::Smooth;
+	for( auto& k : l.keys )
+		if( k.t <= x + 1e-9 ) ip = k.interp;
+}
+void TlTrimBlock( Timeline& tl, TlTrack& t, double t0, double t1, bool left, double x )
+{
+	(void)tl;
+	x = std::max( 0.0, left ? std::min( x, t1 ) : std::max( x, t0 ) );
+	for( auto& l : t.lanes )
+	{
+		bool has = false;
+		for( auto& k : l.keys ) has = has || TlIn( k.t, t0, t1 );
+		if( !has ) continue;
+		float v;
+		V3 c;
+		TlInterp ip;
+		TlAt( l, x, v, c, ip );
+		if( left ) l.keys.erase( std::remove_if( l.keys.begin(), l.keys.end(), [ & ]( const TlKey& k ) { return k.t >= t0 - 1e-9 && k.t < x - 1e-9; } ), l.keys.end() );
+		else l.keys.erase( std::remove_if( l.keys.begin(), l.keys.end(), [ & ]( const TlKey& k ) { return k.t > x + 1e-9 && k.t <= t1 + 1e-9; } ), l.keys.end() );
+		const int i     = TlSetKey( l, x, v, l.kind == TlLaneKind::Color ? &c : nullptr, ip );
+		l.keys[ i ].sel = true;
+	}
+	{
+		//cuts inside the new extent would split the block
+		const double n0 = left ? x : t0, n1 = left ? t1 : x;
+		t.cuts.erase( std::remove_if( t.cuts.begin(), t.cuts.end(), [ & ]( double c ) { return c > n0 + 1e-9 && c < std::max( n1, t1 ) + 0.001; } ), t.cuts.end() );
+	}
+	t.cuts.push_back( left ? x : x + 0.0005 );
+	TlPruneCuts( t );
+}
+bool TlSplitBlock( Timeline& tl, TlTrack& t, double at )
+{
+	std::vector< TlBlock > bs;
+	TlBlocks( tl, t, bs );
+	const double e = 0.001;//the left half ends 1 ms before the cut
+	for( auto& b : bs )
+	{
+		if( !( at > b.t0 + 2 * e && at < b.t1 - e ) ) continue;
+		for( auto& l : t.lanes )
+		{
+			bool before = false, after = false;
+			for( auto& k : l.keys )
+				if( TlIn( k.t, b.t0, b.t1 ) )
+				{
+					if( k.t < at - 1e-9 ) before = true;
+					else after = true;
+				}
+			if( !before || !after ) continue;
+			float v;
+			V3 c;
+			TlInterp ip;
+			TlAt( l, at, v, c, ip );
+			const V3* cp = l.kind == TlLaneKind::Color ? &c : nullptr;
+			bool atKey   = false;
+			for( auto& k : l.keys ) atKey = atKey || fabs( k.t - at ) < 1e-4;
+			TlSetKey( l, at - e, v, cp, ip );
+			if( !atKey ) TlSetKey( l, at, v, cp, ip );
+		}
+		t.cuts.push_back( at );
+		TlPruneCuts( t );
+		return true;
+	}
+	return false;
+}
+bool TlJoinBlocks( Timeline& tl, TlTrack& t, double t1 )
+{
+	std::vector< double > ts;
+	TlKeyTimes( t, ts );
+	auto it = std::upper_bound( ts.begin(), ts.end(), t1 + 1e-9 );
+	if( it == ts.end() ) return false;
+	const double nt = *it;
+	const size_t n  = t.cuts.size();
+	t.cuts.erase( std::remove_if( t.cuts.begin(), t.cuts.end(), [ & ]( double c ) { return c > t1 + 1e-9 && c <= nt + 1e-9; } ), t.cuts.end() );
+	return t.cuts.size() != n && nt - t1 <= TlBlockGap( tl ) + 1e-6;
+}
+
+//================================================================ range over all tracks
+void TlRangeCopy( const Show& s, double a, double b, TlRangeClip& out )
+{
+	out = TlRangeClip();
+	if( b <= a ) return;
+	out.len = b - a;
+	for( auto& t : s.tl.tracks )
+	{
+		for( int li = 0; li < (int)t.lanes.size(); ++li )
+			for( auto k : t.lanes[ li ].keys )
+				if( k.t >= a - 1e-9 && k.t < b - 1e-9 )
+				{
+					k.t -= a;
+					k.sel = false;
+					out.keys[ { t.uid, li } ].push_back( k );
+				}
+		for( auto c : t.clips )
+			if( c.t >= a - 1e-9 && c.t < b - 1e-9 )
+			{
+				c.t -= a;
+				c.sel = false;
+				out.clips.push_back( { t.uid, c } );
+			}
+	}
+	for( auto m : s.tl.markers )
+		if( m.t >= a - 1e-9 && m.t < b - 1e-9 )
+		{
+			m.t -= a;
+			out.markers.push_back( m );
+		}
+	for( int i = 0; i < (int)s.cues.size(); ++i )
+		if( s.cues[ i ].trigger == 2 && s.cues[ i ].tc >= a - 1e-9 && s.cues[ i ].tc < b - 1e-9 ) out.cues.push_back( { i, s.cues[ i ].tc - a } );
+}
+void TlInsertTime( Show& s, double at, double len )
+{
+	if( len <= 0 ) return;
+	Timeline& tl = s.tl;
+	for( auto& t : tl.tracks )
+	{
+		for( auto& l : t.lanes )
+			for( auto& k : l.keys )
+				if( k.t >= at - 1e-9 ) k.t += len;
+		for( auto& c : t.clips )
+			if( c.t >= at - 1e-9 ) c.t += len;
+		for( auto& c : t.cuts )
+			if( c >= at - 1e-9 ) c += len;
+		if( t.kind == TlTrackKind::Show && t.offset >= at - 1e-9 ) t.offset += len;
+	}
+	for( auto& m : tl.markers )
+		if( m.t >= at - 1e-9 ) m.t += len;
+	for( auto& c : s.cues )
+		if( c.trigger == 2 && c.tc >= at - 1e-9 ) c.tc += len;
+	tl.length += len;
+	s.dirty = true;
+}
+void TlDeleteTime( Show& s, double a, double b )
+{
+	if( b <= a ) return;
+	Timeline& tl     = s.tl;
+	const double len = b - a;
+	auto in          = [ & ]( double t ) { return t >= a - 1e-9 && t < b - 1e-9; };
+	for( auto& t : tl.tracks )
+	{
+		for( auto& l : t.lanes )
+		{
+			l.keys.erase( std::remove_if( l.keys.begin(), l.keys.end(), [ & ]( const TlKey& k ) { return in( k.t ); } ), l.keys.end() );
+			for( auto& k : l.keys )
+				if( k.t >= b - 1e-9 ) k.t -= len;
+		}
+		t.clips.erase( std::remove_if( t.clips.begin(), t.clips.end(), [ & ]( const TlClip& c ) { return in( c.t ); } ), t.clips.end() );
+		for( auto& c : t.clips )
+			if( c.t >= b - 1e-9 ) c.t -= len;
+		t.cuts.erase( std::remove_if( t.cuts.begin(), t.cuts.end(), [ & ]( double c ) { return in( c ); } ), t.cuts.end() );
+		for( auto& c : t.cuts )
+			if( c >= b - 1e-9 ) c -= len;
+		t.cuts.push_back( a );//what moved up stays a block of its own
+		TlPruneCuts( t );
+		if( t.kind == TlTrackKind::Show && t.offset >= b - 1e-9 ) t.offset -= len;
+	}
+	tl.markers.erase( std::remove_if( tl.markers.begin(), tl.markers.end(), [ & ]( const TlMarker& m ) { return in( m.t ); } ), tl.markers.end() );
+	for( auto& m : tl.markers )
+		if( m.t >= b - 1e-9 ) m.t -= len;
+	for( auto& c : s.cues )
+	{
+		if( c.trigger != 2 ) continue;
+		if( in( c.tc ) ) c.trigger = 0;//the cue stays in the list, it only loses its timecode
+		else if( c.tc >= b - 1e-9 ) c.tc -= len;
+	}
+	tl.length = std::max( 1.0, tl.length - len );
+	s.dirty   = true;
+}
+void TlRangePaste( Show& s, const TlRangeClip& c, double at )
+{
+	if( c.Empty() ) return;
+	Timeline& tl = s.tl;
+	at           = std::max( 0.0, at );
+	TlInsertTime( s, at, c.len );
+	for( auto& e : c.keys )
+		if( TlTrack* t = tl.Find( e.first.first ) )
+			if( e.first.second < (int)t->lanes.size() )
+			{
+				TlLane& l = t->lanes[ e.first.second ];
+				for( auto k : e.second )
+				{
+					k.t += at;
+					l.keys.push_back( k );
+				}
+				TlSort( l );
+			}
+	for( auto& e : c.clips )
+		if( TlTrack* t = tl.Find( e.first ) )
+		{
+			TlClip n = e.second;
+			n.t += at;
+			t->clips.push_back( n );
+		}
+	for( auto m : c.markers )
+	{
+		m.t += at;
+		tl.markers.push_back( m );
+	}
+	for( auto& t : tl.tracks )
+	{
+		if( t.lanes.empty() ) continue;
+		t.cuts.push_back( at );
+		t.cuts.push_back( at + c.len );
+		TlPruneCuts( t );
+	}
+	s.dirty = true;
+}
+double TlRangeMove( Show& s, double a, double b, double to )
+{
+	if( b <= a ) return a;
+	TlRangeClip c;
+	TlRangeCopy( s, a, b, c );
+	TlDeleteTime( s, a, b );
+	double at = to >= b ? to - ( b - a ) : ( to > a ? a : to );
+	at        = std::max( 0.0, at );
+	TlRangePaste( s, c, at );
+	for( auto& q : c.cues )
+		if( q.first >= 0 && q.first < (int)s.cues.size() )
+		{
+			s.cues[ q.first ].trigger = 2;
+			s.cues[ q.first ].tc      = at + q.second;
+		}
+	return at;
 }
 }//namespace ls

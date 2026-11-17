@@ -179,6 +179,13 @@ struct ScreenGeo
 ScreenGeo GetScreenGeo( const Screen& s );
 
 //extra deck / riser (Stage tab): rectangle or round, standing on the floor or on the main deck
+//2.1 floor reflections (quality "high" only): per surface, off by default
+struct Surface
+{
+	bool reflect = false;
+	float amount = 0.5f;//strength of the reflection 0..1
+	float gloss  = 0.6f;//0 matt (blurred, dull) .. 1 glossy (sharp, mirror-like)
+};
 struct Deck
 {
 	std::string name = "Deck";
@@ -195,6 +202,7 @@ struct Deck
 	int stairs   = 0;           //0 none, 1 front, 2 back, 3 left, 4 right
 	V3 edge{ 0, 0, 0 };         //LED edge on the front (emissive colour, 0 = off)
 	float edgeLevel = 0;        //0..4
+	Surface surf;               //2.1 reflection of the top
 };
 struct StageCfg
 {
@@ -225,6 +233,7 @@ struct StageCfg
 	V3 floorColor{ 0.09f, 0.09f, 0.1f };
 	V3 wallColor{ 0.09f, 0.09f, 0.095f };
 	std::vector< Deck > decks;//extra risers / platforms next to or on the main deck
+	Surface floorSurf, deckSurf;//2.1 reflections of the floor / ground and of the main deck
 };
 
 //---------------------------------------------------------------- effects (effects.cpp)
@@ -568,6 +577,9 @@ struct Show
 	//cue list
 	std::vector< Cue > cues;
 	bool cueTimecode = false;//follow MIDI timecode (cues with trigger 2)
+	//2.1 colour mixing: 0 classic (R/G/B = colour, white = min, other emitters off - shows saved before 2.1),
+	//1 auto (white / amber / lime / indigo take part with the right hue, as bright as possible)
+	int colorMix = 1;
 	int cueCur       = -1;   //runtime: last started cue
 	double cueT      = 0;    //runtime: seconds since it started
 	double tcSec     = -1;   //runtime: current timecode (seconds), < 0 = none
@@ -590,6 +602,9 @@ struct Show
 	float fxSpeed  = 1.0f;//tempo factor for all effects 0.25..4
 	bool fxHold    = false;//freeze all effects
 	int fxSelId    = 0;//effect selected in the editor (the hardware "selected effect" controls use it)
+	//runtime, Lightshow export (effect layers): this effect is left out / runs at full drive (0 = none)
+	int fxMuteId  = 0;
+	int fxForceId = 0;
 	bool dirty = false;
 	std::mutex dmxLock;//guards dmx for the output thread
 	uint32_t dmxVersion = 0;
@@ -604,6 +619,14 @@ struct Show
 	int FreeAddress( int uni, int footprint, int start = 1, int ignoreId = -1 ) const;
 	bool Overlaps( int uni, int addr, int footprint, int ignoreId ) const;
 	FixtureInst* FixtureAt( int uni, int addr, int* slot );
+	//PATCH list order (drag & drop): moves the lamps ids (their list order kept) in front of / behind anchorId and
+	//re-addresses like a ripple edit: the lamps right behind the old place close up, at the new place (anchor's universe)
+	//the lamps behind move up; both stop at the first gap. Everything on DMX channels follows
+	//(RemapChannels). false = does not fit, nothing changed (why: universe). remapOut: key u*1000+ch -> new
+	bool MoveFixtures( const std::vector< int >& ids, int anchorId, bool after, std::string* why = nullptr, std::map< int64_t, int64_t >* remapOut = nullptr );
+	//channels moved (key u*1000+ch): programmer values + runtime layers, DMX targets of modulators / sequencer lanes,
+	//MIDI maps on DMX channels, DMX time lanes, Ableton keys dmx:/uni:
+	void RemapChannels( const std::map< int64_t, int64_t >& m );
 
 	//DMX access for a fixture (Get = what goes out: effect overlay, else base; Set = base)
 	uint8_t Get( const FixtureInst& f, int slot ) const;
@@ -672,7 +695,23 @@ struct Show
 	int ActiveSnapshots() const;
 	//group faders
 	void ApplyGroup( int i );
-	void SetColor( FixtureInst& f, const V3& c, int head = -1 );//programmer colour (RGB/W, CMY)
+	void SetColor( FixtureInst& f, const V3& c, int head = -1 );//programmer colour (RGB/W/A/L, CMY, colour wheel)
+	//2.1: one place for "colour -> channels": (attribute, level 0..1) for every colour attribute the colour sets.
+	//Wheel / macro / CTO entries switch (SnapFadeable = false). Used by SetColor, palettes, effects, time line.
+	void ColorTargets( const FixtureInst& f, const V3& c, std::vector< std::pair< Attr, float > >& out ) const;
+	//current colour of a lamp for display / recording (which: 0 output, 1 base, 2 layer)
+	V3 GetColor( const FixtureInst& f, int head = -1, int which = 0 ) const;
+	bool HasColor( const FixtureInst& f ) const;   //RGB..., CMY or a colour wheel with colour slots
+	bool HasExtraEmitters( const FixtureInst& f ) const;//white / amber / lime / indigo (colour mixing matters)
+	bool HasKelvin( const FixtureInst& f ) const;  //CTO channel or warm + cold white
+	//colour temperature (Kelvin): CTO channel, else warm / cold white mix, else the Kelvin colour via SetColor
+	void SetKelvin( FixtureInst& f, float kelvin, int head = -1 );
+	//colour wheel slot nearest to a colour: value 0..1 for the wheel channel (-1 = none); name for the inspector
+	float WheelValueFor( const FixtureInst& f, const V3& c, std::string* name = nullptr ) const;
+	//2.1: pan / tilt in degrees from the centre (range of the lamp type, like the time line)
+	float AttrRangeDeg( const FixtureInst& f, Attr a ) const;//pan / tilt range in degrees (0 = other attribute)
+	float GetAttrDeg( const FixtureInst& f, Attr a ) const;
+	void SetAttrDeg( FixtureInst& f, Attr a, float deg, int head = -1 );
 	//mounting
 	bool GetMountFrame( MountType t, int idx, MountFrame& fr ) const;
 	void UpdateMounts();//lamps follow their truss / stand (call every frame)

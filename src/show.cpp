@@ -2,6 +2,10 @@
 #include "effects.h"
 #include "params.h"
 #include <atomic>
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <set>
 #include <random>
 #include "../third_party/stb_image.h"
 
@@ -755,6 +759,7 @@ void Show::Clear()
 	progPalColor.clear();
 	progPalPos.clear();
 	cueTimecode = false;
+	colorMix    = 1;
 	cueCur      = -1;
 	cueT        = 0;
 	tcPrev      = -1;
@@ -1198,7 +1203,6 @@ int Show::FindSnapUid( uint32_t uid ) const
 	return -1;
 }
 //---------------------------------------------------------------- palettes
-static const Attr kPalAdd[] = { Attr::Red, Attr::Green, Attr::Blue, Attr::White, Attr::WarmWhite, Attr::ColdWhite, Attr::Amber, Attr::UV, Attr::Lime, Attr::Indigo };
 uint32_t Show::NewPaletteUid() const
 {
 	uint32_t u = 1;
@@ -1215,9 +1219,7 @@ bool Show::PaletteFits( const Palette& p, const FixtureInst& f ) const
 {
 	if( !f.def ) return false;
 	if( p.kind == 1 ) return p.PosOf( f.id ) && ( HasAttr( f, Attr::Pan ) || HasAttr( f, Attr::Tilt ) );
-	for( Attr a : kPalAdd )
-		if( HasAttr( f, a ) ) return true;
-	return HasAttr( f, Attr::Cyan );
+	return HasColor( f );
 }
 //same channels and values as SetColor / SetAttr( head -1 ) write
 bool Show::EncodePalette( const Palette& p, const FixtureInst& f, std::vector< uint8_t >& v ) const
@@ -1243,29 +1245,9 @@ bool Show::EncodePalette( const Palette& p, const FixtureInst& f, std::vector< u
 		if( HasAttr( f, Attr::Tilt ) ) put( Attr::Tilt, q->tilt );
 		return any;
 	}
-	const V3& c = p.color;
-	if( f.def->subtractive || ( !HasAttr( f, Attr::Red ) && HasAttr( f, Attr::Cyan ) ) )
-	{
-		put( Attr::Cyan, 1 - c.x );
-		put( Attr::Magenta, 1 - c.y );
-		put( Attr::Yellow, 1 - c.z );
-	}
-	else
-	{
-		const float w = std::min( { c.x, c.y, c.z } );
-		for( Attr a : kPalAdd )
-		{
-			if( !HasAttr( f, a ) ) continue;
-			float t = 0;
-			if( a == Attr::Red ) t = c.x;
-			else if( a == Attr::Green ) t = c.y;
-			else if( a == Attr::Blue ) t = c.z;
-			else if( a == Attr::White ) t = w;
-			put( a, t );
-		}
-	}
-	for( Attr a : { Attr::ColorWheel, Attr::ColorMacro, Attr::CTO } )
-		if( HasAttr( f, a ) ) put( a, 0 );
+	std::vector< std::pair< Attr, float > > t;
+	ColorTargets( f, p.color, t );
+	for( auto& q : t ) put( q.first, q.second );
 	return any;
 }
 int Show::ApplyPalette( uint32_t uid, const std::vector< int >& ids )
@@ -1727,20 +1709,117 @@ Projector Show::ProjectorOut( int i ) const
 }
 
 //---------------------------------------------------------------- group faders
-void Show::SetColor( FixtureInst& f, const V3& c, int head )
+//---------------------------------------------------------------- colour (2.1)
+static const Attr kAddEm[]   = { Attr::Red, Attr::Green, Attr::Blue, Attr::White, Attr::WarmWhite, Attr::ColdWhite, Attr::Amber, Attr::UV, Attr::Lime, Attr::Indigo };
+static const Attr kMixExtra[] = { Attr::White, Attr::WarmWhite, Attr::ColdWhite, Attr::Amber, Attr::Lime, Attr::Indigo };
+//mixing basis in programmer level space: R/G/B are the axes, the other emitters their colour in that space
+static V3 MixBasis( Attr a )
 {
-	if( !f.def ) return;
-	if( f.def->subtractive || ( !HasAttr( f, Attr::Red ) && HasAttr( f, Attr::Cyan ) ) )
+	if( a == Attr::Red ) return V3( 1, 0, 0 );
+	if( a == Attr::Green ) return V3( 0, 1, 0 );
+	if( a == Attr::Blue ) return V3( 0, 0, 1 );
+	return EmitterColor( a );
+}
+static float Max3( const V3& v ) { return std::max( { v.x, v.y, v.z } ); }
+static bool UseCmy( const Show& s, const FixtureInst& f ) { return f.def->subtractive || ( !s.HasAttr( f, Attr::Red ) && s.HasAttr( f, Attr::Cyan ) ); }
+static bool AnyAdd( const Show& s, const FixtureInst& f )
+{
+	for( Attr a : kAddEm )
+		if( a != Attr::UV && s.HasAttr( f, a ) ) return true;
+	return false;
+}
+//the one global colour wheel channel of a lamp (nullptr: none or more than one)
+static const Channel* ColorWheelCh( const FixtureInst& f )
+{
+	const Mode* m = f.M();
+	if( !m ) return nullptr;
+	const Channel* r = nullptr;
+	for( auto& c : m->ch )
+		if( !c.isFine && c.attr == Attr::ColorWheel )
+		{
+			if( r ) return nullptr;
+			r = &c;
+		}
+	return r;
+}
+bool Show::HasExtraEmitters( const FixtureInst& f ) const
+{
+	if( !f.def || UseCmy( *this, f ) ) return false;
+	for( Attr a : kMixExtra )
+		if( HasAttr( f, a ) ) return true;
+	return false;
+}
+bool Show::HasColor( const FixtureInst& f ) const
+{
+	if( !f.def ) return false;
+	if( HasAttr( f, Attr::Cyan ) || AnyAdd( *this, f ) ) return true;
+	return WheelValueFor( f, V3( 1, 0, 0 ) ) >= 0;
+}
+bool Show::HasKelvin( const FixtureInst& f ) const
+{
+	return f.def && ( HasAttr( f, Attr::CTO ) || ( HasAttr( f, Attr::WarmWhite ) && HasAttr( f, Attr::ColdWhite ) ) );
+}
+float Show::WheelValueFor( const FixtureInst& f, const V3& c, std::string* name ) const
+{
+	const Channel* ch = f.def ? ColorWheelCh( f ) : nullptr;
+	if( !ch ) return -1;
+	const float pk = Max3( c );
+	const V3 n     = pk > 1e-4f ? c / pk : V3( 1, 1, 1 );
+	float best = 1e9f, val = -1;
+	int colors = 0;
+	for( auto& cap : ch->caps )
 	{
-		SetAttr( f, Attr::Cyan, 1 - c.x, head );
-		SetAttr( f, Attr::Magenta, 1 - c.y, head );
-		SetAttr( f, Attr::Yellow, 1 - c.z, head );
+		if( cap.k != CapK::WheelSlot || cap.wheel < 0 || cap.wheel >= (int)f.def->wheels.size() || cap.slotA != cap.slotB ) continue;
+		const int sl = (int)floorf( cap.slotA + 0.001f ) - 1;
+		const Wheel& w = f.def->wheels[ cap.wheel ];
+		if( sl < 0 || sl >= (int)w.slots.size() || fabsf( cap.slotA - floorf( cap.slotA + 0.001f ) ) > 0.01f ) continue;
+		const WheelSlot& ws = w.slots[ sl ];
+		V3 sc;
+		if( ws.type == SlotT::Open ) sc = V3( 1, 1, 1 );
+		else if( ws.type == SlotT::Color && ws.hasColor ) { sc = ws.color; ++colors; }
+		else continue;
+		const float m = Max3( sc );
+		if( m < 1e-4f ) continue;
+		sc          = sc / m;
+		const V3 d  = sc - n;
+		const float e = d.x * d.x + d.y * d.y + d.z * d.z;
+		if( e < best - 1e-6f )
+		{
+			best = e;
+			val  = ( ( cap.lo + cap.hi ) * 0.5f ) / 65535.0f;
+			if( name ) *name = ws.type == SlotT::Open ? std::string( "Open" ) : ws.name;
+		}
 	}
-	else
+	return colors ? val : -1;
+}
+void Show::ColorTargets( const FixtureInst& f, const V3& cIn, std::vector< std::pair< Attr, float > >& out ) const
+{
+	out.clear();
+	if( !f.def ) return;
+	const V3 c( Saturate( cIn.x ), Saturate( cIn.y ), Saturate( cIn.z ) );
+	if( UseCmy( *this, f ) )
 	{
+		out.push_back( { Attr::Cyan, 1 - c.x } );
+		out.push_back( { Attr::Magenta, 1 - c.y } );
+		out.push_back( { Attr::Yellow, 1 - c.z } );
+	}
+	else if( !AnyAdd( *this, f ) )
+	{
+		//colour wheel only: nearest slot (black keeps the wheel where it is)
+		const float v = Max3( c ) > 0.01f ? WheelValueFor( f, c ) : -1;
+		if( v >= 0 )
+		{
+			out.push_back( { Attr::ColorWheel, v } );
+			for( Attr a : { Attr::ColorMacro, Attr::CTO } )
+				if( HasAttr( f, a ) ) out.push_back( { a, 0.0f } );
+		}
+		return;
+	}
+	else if( colorMix == 0 || !HasExtraEmitters( f ) )
+	{
+		//classic (and every RGB-only lamp): R/G/B = colour, white = min, other emitters off
 		const float w = std::min( { c.x, c.y, c.z } );
-		const Attr em[] = { Attr::Red, Attr::Green, Attr::Blue, Attr::White, Attr::WarmWhite, Attr::ColdWhite, Attr::Amber, Attr::UV, Attr::Lime, Attr::Indigo };
-		for( Attr a : em )
+		for( Attr a : kAddEm )
 		{
 			if( !HasAttr( f, a ) ) continue;
 			float t = 0;
@@ -1748,11 +1827,177 @@ void Show::SetColor( FixtureInst& f, const V3& c, int head )
 			else if( a == Attr::Green ) t = c.y;
 			else if( a == Attr::Blue ) t = c.z;
 			else if( a == Attr::White ) t = w;
-			SetAttr( f, a, t, head );
+			out.push_back( { a, t } );
 		}
 	}
+	else
+	{
+		//auto: A = extra emitters first (greedy, each as much as the hue allows), rest on R/G/B;
+		//B = plain R/G/B. Both give the same hue; their sum (scaled) is as bright as possible.
+		float lv[ (int)Attr::Count ] = {}, la[ (int)Attr::Count ] = {};
+		const float pk = Max3( c );
+		const bool rgb = HasAttr( f, Attr::Red ) && HasAttr( f, Attr::Green ) && HasAttr( f, Attr::Blue );
+		if( pk > 1e-5f )
+		{
+			const V3 n = c / pk;
+			V3 r       = n;
+			for( Attr a : kMixExtra )
+			{
+				if( !HasAttr( f, a ) ) continue;
+				const V3 e = MixBasis( a );
+				float t    = 1e9f;
+				for( int i = 0; i < 3; ++i )
+					if( e[ i ] >= 0.1f ) t = std::min( t, r[ i ] / e[ i ] );
+				t = Clamp( t, 0.0f, 1.0f );
+				la[ (int)a ] = t;
+				r            = r - e * t;
+				r            = V3( std::max( r.x, 0.0f ), std::max( r.y, 0.0f ), std::max( r.z, 0.0f ) );
+			}
+			if( HasAttr( f, Attr::Red ) ) la[ (int)Attr::Red ] = r.x;
+			if( HasAttr( f, Attr::Green ) ) la[ (int)Attr::Green ] = r.y;
+			if( HasAttr( f, Attr::Blue ) ) la[ (int)Attr::Blue ] = r.z;
+			float ma = 0;
+			for( float x : la ) ma = std::max( ma, x );
+			if( ma > 1e-6f )
+				for( float& x : la ) x /= ma;
+			if( rgb )
+			{
+				lv[ (int)Attr::Red ]   = n.x;
+				lv[ (int)Attr::Green ] = n.y;
+				lv[ (int)Attr::Blue ]  = n.z;
+			}
+			float mx = 0;
+			for( int i = 0; i < (int)Attr::Count; ++i )
+			{
+				lv[ i ] += la[ i ];
+				mx = std::max( mx, lv[ i ] );
+			}
+			if( mx > 1e-6f )
+				for( float& x : lv ) x = x / mx * pk;
+		}
+		for( Attr a : kAddEm )
+			if( HasAttr( f, a ) && a != Attr::UV ) out.push_back( { a, Saturate( lv[ (int)a ] ) } );
+	}
 	for( Attr a : { Attr::ColorWheel, Attr::ColorMacro, Attr::CTO } )
-		if( HasAttr( f, a ) ) SetAttr( f, a, 0, head );
+		if( HasAttr( f, a ) ) out.push_back( { a, 0.0f } );
+}
+V3 Show::GetColor( const FixtureInst& f, int head, int which ) const
+{
+	auto get = [ & ]( Attr a ) { return which == 1 ? GetAttrBase( f, a, head ) : which == 2 ? GetAttrLayer( f, a, head ) : GetAttr( f, a, head ); };
+	if( !f.def ) return V3( 1, 1, 1 );
+	if( UseCmy( *this, f ) ) return V3( 1 - get( Attr::Cyan ), 1 - get( Attr::Magenta ), 1 - get( Attr::Yellow ) );
+	if( !AnyAdd( *this, f ) )
+	{
+		const Channel* ch = ColorWheelCh( f );
+		if( !ch ) return V3( 1, 1, 1 );
+		const uint16_t v16 = (uint16_t)( get( Attr::ColorWheel ) * 65535.0f + 0.5f );
+		if( const Cap* cp = ch->Find( v16 ) )
+			if( cp->k == CapK::WheelSlot && cp->wheel >= 0 && cp->wheel < (int)f.def->wheels.size() )
+			{
+				const int sl = (int)floorf( cp->slotA + 0.001f ) - 1;
+				const Wheel& w = f.def->wheels[ cp->wheel ];
+				if( sl >= 0 && sl < (int)w.slots.size() && w.slots[ sl ].type == SlotT::Color && w.slots[ sl ].hasColor )
+				{
+					const V3 sc = w.slots[ sl ].color;
+					return sc / std::max( 1e-4f, Max3( sc ) );
+				}
+			}
+		return V3( 1, 1, 1 );
+	}
+	if( colorMix == 0 || !HasExtraEmitters( f ) )
+	{
+		V3 c = V3( get( Attr::Red ), get( Attr::Green ), get( Attr::Blue ) );
+		if( HasAttr( f, Attr::White ) )
+		{
+			const float w = get( Attr::White );
+			c             = V3( std::max( c.x, w ), std::max( c.y, w ), std::max( c.z, w ) );
+		}
+		return c;
+	}
+	//auto: rebuild from the emitters, brightness = brightest emitter level
+	V3 sum( 0, 0, 0 );
+	float pk = 0;
+	for( Attr a : kAddEm )
+	{
+		if( a == Attr::UV || !HasAttr( f, a ) ) continue;
+		const float v = get( a );
+		sum           = sum + MixBasis( a ) * v;
+		pk            = std::max( pk, v );
+	}
+	const float m = Max3( sum );
+	return m > 1e-6f ? sum * ( pk / m ) : V3( 0, 0, 0 );
+}
+void Show::SetColor( FixtureInst& f, const V3& c, int head )
+{
+	static thread_local std::vector< std::pair< Attr, float > > t;
+	ColorTargets( f, c, t );
+	for( auto& p : t ) SetAttr( f, p.first, p.second, head );
+}
+float Show::AttrRangeDeg( const FixtureInst& f, Attr a ) const
+{
+	if( !f.def ) return 0;
+	if( a == Attr::Pan ) return f.def->panRange > 1 ? f.def->panRange : 540.0f;
+	if( a == Attr::Tilt ) return f.def->tiltRange > 1 ? f.def->tiltRange : 270.0f;
+	return 0;
+}
+float Show::GetAttrDeg( const FixtureInst& f, Attr a ) const
+{
+	return ( GetAttr( f, a ) - 0.5f ) * AttrRangeDeg( f, a );
+}
+void Show::SetAttrDeg( FixtureInst& f, Attr a, float deg, int head )
+{
+	const float r = AttrRangeDeg( f, a );
+	if( r > 0 ) SetAttr( f, a, 0.5f + deg / r, head );
+}
+void Show::SetKelvin( FixtureInst& f, float kelvin, int head )
+{
+	if( !f.def ) return;
+	const float K = Clamp( kelvin, 1000.0f, 20000.0f );
+	//CTO channel with a colour temperature range: the value inside it (else the nearest end)
+	if( const Mode* m = f.M() )
+		for( auto& ch : m->ch )
+		{
+			if( ch.isFine || ch.attr != Attr::CTO ) continue;
+			const Cap* best = nullptr;
+			float bestD = 1e9f, v = 0;
+			for( auto& cap : ch.caps )
+			{
+				if( cap.k != CapK::ColorTemp || cap.a <= 0 || cap.b <= 0 ) continue;
+				const float lo = std::min( cap.a, cap.b ), hi = std::max( cap.a, cap.b );
+				const float d  = K < lo ? lo - K : K > hi ? K - hi : 0.0f;
+				if( d < bestD )
+				{
+					bestD = d;
+					best  = &cap;
+					const float t = cap.a != cap.b ? Saturate( ( K - cap.a ) / ( cap.b - cap.a ) ) : 0.5f;
+					v = ( cap.lo + t * ( cap.hi - cap.lo ) ) / 65535.0f;
+				}
+			}
+			if( best )
+			{
+				SetAttr( f, Attr::CTO, v, head );
+				return;
+			}
+		}
+	//current brightness of the emitters (0 -> full)
+	float pk = 0;
+	for( Attr a : kAddEm )
+		if( a != Attr::UV && HasAttr( f, a ) ) pk = std::max( pk, GetAttr( f, a, head ) );
+	if( pk < 0.01f ) pk = 1;
+	if( HasAttr( f, Attr::WarmWhite ) && HasAttr( f, Attr::ColdWhite ) )
+	{
+		//mired mix between 2700 K and 6500 K; colour emitters off
+		const float mw = 1e6f / 2700.0f, mc = 1e6f / 6500.0f, mk = 1e6f / K;
+		const float t  = Saturate( ( mk - mc ) / ( mw - mc ) );
+		const float s  = pk / std::max( t, 1 - t );
+		for( Attr a : kAddEm )
+		{
+			if( a == Attr::UV || !HasAttr( f, a ) ) continue;
+			SetAttr( f, a, a == Attr::WarmWhite ? t * s : a == Attr::ColdWhite ? ( 1 - t ) * s : 0.0f, head );
+		}
+		return;
+	}
+	SetColor( f, Kelvin( K ) * pk, head );
 }
 void Show::ApplyGroup( int i )
 {
@@ -1796,6 +2041,22 @@ void Show::ApplyGroup( int i )
 }
 
 //---------------------------------------------------------------- save / load
+static Json SurfToJson( const Surface& s )
+{
+	Json o = Json::Obj();
+	o.Set( "reflect", s.reflect );
+	o.Set( "amount", s.amount );
+	o.Set( "gloss", s.gloss );
+	return o;
+}
+static Surface SurfFromJson( const Json& o )
+{
+	Surface s;
+	s.reflect = o[ "reflect" ].B( false );
+	s.amount  = Saturate( o[ "amount" ].F( s.amount ) );
+	s.gloss   = Saturate( o[ "gloss" ].F( s.gloss ) );
+	return s;
+}
 static Json V( const V3& v )
 {
 	Json a = Json::Arr();
@@ -2012,6 +2273,8 @@ Json Show::ToJson( bool undo )
 	st.Set( "beamLevel", stage.beamLevel );
 	st.Set( "floorColor", V( stage.floorColor ) );
 	st.Set( "wallColor", V( stage.wallColor ) );
+	st.Set( "floorSurf", SurfToJson( stage.floorSurf ) );
+	st.Set( "deckSurf", SurfToJson( stage.deckSurf ) );
 	if( !stage.decks.empty() )
 	{
 		Json ds = Json::Arr();
@@ -2034,6 +2297,7 @@ Json Show::ToJson( bool undo )
 			o.Set( "stairs", d.stairs );
 			o.Set( "edge", V( d.edge ) );
 			o.Set( "edgeLevel", d.edgeLevel );
+			o.Set( "surf", SurfToJson( d.surf ) );
 			ds.Push( o );
 		}
 		st.Set( "decks", ds );
@@ -2172,6 +2436,7 @@ Json Show::ToJson( bool undo )
 		j.Set( "cueTimecode", cueTimecode );
 	}
 	j.Set( "timeline", TimelineToJson( tl ) );
+	j.Set( "colorMix", colorMix );
 	Json gr = Json::Arr();
 	for( auto& g : groups )
 	{
@@ -2420,6 +2685,8 @@ bool Show::FromJson( const Json& j, const Library& lib, const std::string& file,
 	stage.beamLevel   = st[ "beamLevel" ].F( stage.beamLevel );
 	stage.floorColor  = V( st[ "floorColor" ], stage.floorColor );
 	stage.wallColor   = V( st[ "wallColor" ], stage.wallColor );
+	stage.floorSurf   = SurfFromJson( st[ "floorSurf" ] );//shows before 2.1: no reflections
+	stage.deckSurf    = SurfFromJson( st[ "deckSurf" ] );
 	stage.decks.clear();
 	if( const Json* ds = st.Find( "decks" ) )
 		for( auto& o : ds->a )
@@ -2441,6 +2708,7 @@ bool Show::FromJson( const Json& j, const Library& lib, const std::string& file,
 			d.stairs    = Clamp( o[ "stairs" ].I( 0 ), 0, 4 );
 			d.edge      = V( o[ "edge" ], d.edge );
 			d.edgeLevel = Clamp( o[ "edgeLevel" ].F( 0 ), 0.0f, 4.0f );
+			d.surf      = SurfFromJson( o[ "surf" ] );
 			stage.decks.push_back( d );
 		}
 	for( auto& o : j[ "midi" ].a ) midi.push_back( MidiMapFromJson( o ) );
@@ -2568,6 +2836,7 @@ bool Show::FromJson( const Json& j, const Library& lib, const std::string& file,
 		cues.push_back( c );
 	}
 	cueTimecode = j[ "cueTimecode" ].B( false );
+	colorMix    = Clamp( j[ "colorMix" ].I( 0 ), 0, 1 );//shows before 2.1: classic mixing
 	TimelineFromJson( tl, j[ "timeline" ] );
 	//show id: saved one, else derived from the file name (old files: stable until saved once)
 	if( j.Find( "showId" ) && !j[ "showId" ].Str().empty() ) showId = j[ "showId" ].Str();
@@ -2626,5 +2895,206 @@ bool Show::FromJson( const Json& j, const Library& lib, const std::string& file,
 	++dmxVersion;
 	if( !missing.empty() && err ) *err = "unknown fixture types: " + missing;
 	return true;
+}
+
+//================================================================ patch order (drag & drop in the PATCH list)
+static int64_t ChKey( int u, int ch ) { return (int64_t)u * 1000 + ch; }
+
+bool Show::MoveFixtures( const std::vector< int >& ids, int anchorId, bool after, std::string* why, std::map< int64_t, int64_t >* remapOut )
+{
+	std::set< int > mv( ids.begin(), ids.end() );
+	if( mv.empty() || mv.count( anchorId ) || !FindFixture( anchorId ) ) return false;
+	//old state (remap; undo a move that does not fit)
+	const std::vector< FixtureInst > old = fixtures;
+	std::map< int, std::pair< int, int > > oldUA;//id -> (universe, address)
+	for( auto& f : old ) oldUA[ f.id ] = { f.universe, f.address };
+	//lamps of a universe that stay, by address
+	auto staying = [ & ]( int U ) {
+		std::vector< FixtureInst* > v;
+		for( auto& f : fixtures )
+			if( f.universe == U && !mv.count( f.id ) ) v.push_back( &f );
+		std::sort( v.begin(), v.end(), []( const FixtureInst* a, const FixtureInst* b ) { return a->address < b->address; } );
+		return v;
+	};
+	//1. take the lamps out: the lamps right behind each one (without a gap) close up (highest address first)
+	std::vector< FixtureInst* > out;
+	for( auto& f : fixtures )
+		if( mv.count( f.id ) ) out.push_back( &f );
+	if( out.empty() ) return false;
+	std::sort( out.begin(), out.end(), []( const FixtureInst* a, const FixtureInst* b ) { return a->universe != b->universe ? a->universe > b->universe : a->address > b->address; } );
+	for( FixtureInst* r : out )
+	{
+		const int len = r->Footprint();
+		int expect    = r->address + len;
+		for( FixtureInst* f : staying( r->universe ) )
+		{
+			if( f->address < r->address + len ) continue;
+			if( f->address != expect ) break;//gap: stop
+			expect = f->address + f->Footprint();
+			f->address -= len;
+		}
+	}
+	//2. put them in front of / behind the anchor (as a block, list order); lamps behind move up until a gap
+	FixtureInst* anchor = FindFixture( anchorId );
+	const int U         = anchor->universe;
+	const int ins       = after ? anchor->address + anchor->Footprint() : anchor->address;
+	int cur             = ins;
+	for( auto& f : fixtures )
+		if( mv.count( f.id ) )
+		{
+			f.universe = U;
+			f.address  = cur;
+			cur += f.Footprint();
+		}
+	for( FixtureInst* f : staying( U ) )
+	{
+		if( f->address < ins ) continue;
+		if( f->address >= cur ) break;//enough room: stop
+		f->address = cur;
+		cur += f->Footprint();
+	}
+	//3. list order: the moved lamps as a block next to the anchor
+	{
+		std::vector< FixtureInst > moved, rest;
+		for( auto& f : fixtures ) ( mv.count( f.id ) ? moved : rest ).push_back( f );
+		size_t at = 0;
+		while( at < rest.size() && rest[ at ].id != anchorId ) ++at;
+		if( after && at < rest.size() ) ++at;
+		rest.insert( rest.begin() + at, moved.begin(), moved.end() );
+		fixtures = std::move( rest );
+	}
+	//4. check: no new overlaps, everything inside 1..512
+	auto clashes = [ & ]( const std::vector< FixtureInst >& v ) {
+		std::set< int > c;
+		for( size_t i = 0; i < v.size(); ++i )
+		{
+			const int fi = v[ i ].Footprint();
+			if( v[ i ].address < 1 || v[ i ].address + fi - 1 > 512 ) c.insert( v[ i ].id );
+			for( size_t j = i + 1; j < v.size(); ++j )
+				if( v[ i ].universe == v[ j ].universe && v[ i ].address <= v[ j ].address + v[ j ].Footprint() - 1 && v[ j ].address <= v[ i ].address + fi - 1 )
+				{
+					c.insert( v[ i ].id );
+					c.insert( v[ j ].id );
+				}
+		}
+		return c;
+	};
+	const std::set< int > before = clashes( old ), now = clashes( fixtures );
+	for( int id : now )
+		if( !before.count( id ) )
+		{
+			fixtures = old;
+			if( why ) *why = "Universe " + std::to_string( U );
+			return false;
+		}
+	//5. everything that points at the old channels follows the lamps
+	std::map< int64_t, int64_t > m;
+	for( auto& f : fixtures )
+	{
+		auto o = oldUA[ f.id ];
+		if( o.first == f.universe && o.second == f.address ) continue;
+		for( int k = 0; k < f.Footprint(); ++k )
+			m[ ChKey( o.first, o.second + k ) ] = ChKey( f.universe, f.address + k );
+	}
+	if( !m.empty() ) RemapChannels( m );
+	if( remapOut ) *remapOut = m;
+	dirty = true;
+	++dmxVersion;
+	return true;
+}
+
+void Show::RemapChannels( const std::map< int64_t, int64_t >& m )
+{
+	if( m.empty() ) return;
+	auto remapCh = [ & ]( int& u, int& ch ) {
+		auto it = m.find( ChKey( u, ch ) );
+		if( it == m.end() ) return false;
+		u  = (int)( it->second / 1000 );
+		ch = (int)( it->second % 1000 );
+		return true;
+	};
+	//per channel values: programmer (base DMX) + runtime layers. Channels left empty go back to their rest value.
+	{
+		std::lock_guard< std::mutex > l( dmxLock );
+		auto apply = [ & ]( auto& arrays, auto rest ) {
+			const auto orig = arrays;
+			std::set< int64_t > dst;
+			for( auto& kv : m ) dst.insert( kv.second );
+			for( auto& kv : m )
+			{
+				if( dst.count( kv.first ) ) continue;
+				const int ui = UniIndex( (int)( kv.first / 1000 ) ), c = (int)( kv.first % 1000 ) - 1;
+				if( ui >= 0 && ui < (int)arrays.size() && c >= 0 && c < 512 ) arrays[ ui ][ c ] = rest;
+			}
+			for( auto& kv : m )
+			{
+				const int us = UniIndex( (int)( kv.first / 1000 ) ), cs = (int)( kv.first % 1000 ) - 1;
+				const int ud = UniIndex( (int)( kv.second / 1000 ) ), cd = (int)( kv.second % 1000 ) - 1;
+				if( us < 0 || us >= (int)orig.size() || ud < 0 || ud >= (int)arrays.size() || cs < 0 || cs >= 512 || cd < 0 || cd >= 512 ) continue;
+				arrays[ ud ][ cd ] = orig[ us ][ cs ];
+			}
+		};
+		apply( dmx, (uint8_t)0 );
+		apply( fxOut, (int16_t)-1 );
+		apply( snapOut, (int16_t)-1 );
+		apply( grpSeq, (uint32_t)0 );
+		apply( progSeq, (uint32_t)0 );
+	}
+	//modulators / sequencer lanes on raw DMX channels
+	for( auto& e : effects )
+	{
+		if( e.tgt.mode == 2 ) remapCh( e.tgt.uni, e.tgt.ch );
+		for( auto& l : e.lanes )
+			if( l.tgt.mode == 2 ) remapCh( l.tgt.uni, l.tgt.ch );
+	}
+	//MIDI maps on DMX channels
+	for( auto& mm : midi )
+		if( mm.target == MidiTarget::DmxChannel ) remapCh( mm.universe, mm.channelDmx );
+	//DMX time lanes
+	for( auto& t : tl.tracks )
+		for( auto& l : t.lanes )
+			if( l.kind == TlLaneKind::Dmx ) remapCh( l.uni, l.ch );
+	//Ableton assignments: keys dmx:<u>:<ch>[:16] (knobs / buttons and in the device state), uni:<u>:<ch> (DMX device)
+	auto remapText = [ & ]( std::string& s ) {
+		static const char* pre[] = { "dmx", "uni" };
+		static const char* sep[] = { ":", "%3A", "%3a" };
+		bool any = false;
+		for( const char* p : pre )
+			for( const char* sp : sep )
+			{
+				const std::string head = std::string( p ) + sp;
+				const size_t sl        = strlen( sp );
+				size_t pos             = 0;
+				while( ( pos = s.find( head, pos ) ) != std::string::npos )
+				{
+					if( pos > 0 && ( isalpha( (unsigned char)s[ pos - 1 ] ) || s[ pos - 1 ] == '_' ) ) { pos += head.size(); continue; }//part of a longer word ("%22" before a key is fine)
+					size_t i = pos + head.size(), j = i;
+					while( j < s.size() && isdigit( (unsigned char)s[ j ] ) ) ++j;
+					if( j == i || s.compare( j, sl, sp ) != 0 ) { pos = j; continue; }
+					size_t k = j + sl, e = k;
+					while( e < s.size() && isdigit( (unsigned char)s[ e ] ) ) ++e;
+					if( e == k || e - i > 12 ) { pos = e; continue; }
+					int u = atoi( s.substr( i, j - i ).c_str() ), ch = atoi( s.substr( k, e - k ).c_str() );
+					if( remapCh( u, ch ) )
+					{
+						const std::string rep = head + std::to_string( u ) + sp + std::to_string( ch );
+						s.replace( pos, e - pos, rep );
+						pos += rep.size();
+						any = true;
+					}
+					else pos = e;
+				}
+			}
+		return any;
+	};
+	for( auto& a : ableton )
+	{
+		bool ch = false;
+		for( auto& k : a.knobs ) ch |= remapText( k );
+		for( auto& b : a.buttons ) ch |= remapText( b );
+		if( ch ) a.knobsNewer = true;
+		remapText( a.state );
+	}
+	dirty = true;
 }
 }//namespace ls

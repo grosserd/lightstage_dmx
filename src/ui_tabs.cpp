@@ -21,10 +21,19 @@ void App::PanelBottom()
 	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 6, 5 ) );
 	//--tab <name> (screenshots / tests): select that tab once
 	auto fl = [ & ]( const char* name, const char* en = "" ) { return !startTab.empty() && ( startTab == name || startTab == en ) ? ImGuiTabItemFlags_SetSelected : 0; };//German key or English name
+	//a snapshot / effect dragged towards the Time Line: its list disappears when the tab changes, and ImGui drops a payload
+	//whose source is no longer drawn - keep it alive while the mouse button is held
+	if( const ImGuiPayload* pl = ImGui::GetDragDropPayload() )
+		if( pl->IsDataType( "LS_TLCLIP" ) && ImGui::IsMouseDown( 0 ) ) GImGui->DragDropPayload.DataFrameCount = ImGui::GetFrameCount();
+	auto tabMark = [ & ]( const char* n ) { UiMark( n, ImGui::GetItemRectMin(), ImGui::GetItemRectMax() ); };
 	if( ImGui::BeginTabItem( "DMX", nullptr, fl( "DMX" ) ) ) { TabDmx(); ImGui::EndTabItem(); }
-	if( ImGui::BeginTabItem( L( "Effekte" ), nullptr, fl( "Effekte", "Effects" ) ) ) { TabEffects(); ImGui::EndTabItem(); }
+	{
+		const bool o = ImGui::BeginTabItem( L( "Effekte" ), nullptr, fl( "Effekte", "Effects" ) );
+		tabMark( "tab.effects" );
+		if( o ) { TabEffects(); ImGui::EndTabItem(); }
+	}
 	if( ImGui::BeginTabItem( "MIDI", nullptr, fl( "MIDI" ) ) ) { TabMidi(); ImGui::EndTabItem(); }
-	if( ImGui::BeginTabItem( L( "Ausgang / Interface" ), nullptr, fl( "Ausgang", "Output" ) ) ) { TabOutput(); ImGui::EndTabItem(); }
+	if( ImGui::BeginTabItem( L( "Ausgang / Interface" ), nullptr, fl( "Ausgang", "Output" ) ) ) { lastOutputTabFrame_ = ImGui::GetFrameCount(); TabOutput(); ImGui::EndTabItem(); }
 	if( ImGui::BeginTabItem( L( "Bühne" ), nullptr, fl( "Buehne", "Stage" ) ) ) { TabStage(); ImGui::EndTabItem(); }
 	if( ImGui::BeginTabItem( L( "Video / Leinwand" ), nullptr, fl( "Video" ) ) )
 	{
@@ -34,12 +43,24 @@ void App::PanelBottom()
 	}
 	else
 		videoTab_ = false;
-	if( ImGui::BeginTabItem( "Snapshots", nullptr, fl( "Snapshots" ) ) ) { TabSnapshots(); ImGui::EndTabItem(); }
+	{
+		const bool o = ImGui::BeginTabItem( "Snapshots", nullptr, fl( "Snapshots" ) );
+		tabMark( "tab.snapshots" );
+		if( o ) { TabSnapshots(); ImGui::EndTabItem(); }
+	}
 	if( ImGui::BeginTabItem( "Cues", nullptr, fl( "Cues" ) ) ) { TabCues(); ImGui::EndTabItem(); }
 	{
 		ImGuiTabItemFlags tf = fl( "Timeline" ) | ( tlSelectTab_ && !tlWin_ ? ImGuiTabItemFlags_SetSelected : 0 );
 		tlSelectTab_         = false;
-		if( ImGui::BeginTabItem( "Time Line", nullptr, tf ) ) { TabTimeline(); ImGui::EndTabItem(); }
+		const bool tlOpen = ImGui::BeginTabItem( "Time Line", nullptr, tf );
+		tabMark( "tab.timeline" );
+		//drag & drop: a dragged snapshot / effect opens the Time Line when it is held over its tab
+		if( !tlOpen && ImGui::BeginDragDropTarget() )
+		{
+			if( ImGui::AcceptDragDropPayload( "LS_TLCLIP", ImGuiDragDropFlags_AcceptPeekOnly | ImGuiDragDropFlags_AcceptNoDrawDefaultRect ) ) tlSelectTab_ = true;
+			ImGui::EndDragDropTarget();
+		}
+		if( tlOpen ) { TabTimeline(); ImGui::EndTabItem(); }
 	}
 	if( kPalettesTab && ImGui::BeginTabItem( L( "Paletten" ), nullptr, fl( "Paletten", "Palettes" ) ) ) { TabPalettes(); ImGui::EndTabItem(); }
 	if( ImGui::BeginTabItem( L( "Gruppen" ), nullptr, fl( "Gruppen", "Groups" ) ) ) { TabGroups(); ImGui::EndTabItem(); }
@@ -310,7 +331,21 @@ void App::TabMidi()
 			}
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth( -1 );
-			if( ls::rs::DragFloatRange2( "##r", &m.lo, &m.hi, 0.005f, 0, m.target == MidiTarget::Master ? 10.0f : 1.0f, "%.2f", "%.2f" ) ) show.dirty = true;
+			//2.1: pan / tilt range in degrees from the centre
+			const FixtureInst* mf = m.target == MidiTarget::FixtureAttr && ( m.attr == Attr::Pan || m.attr == Attr::Tilt ) && !m.fixtures.empty() ? show.FindFixture( m.fixtures[ 0 ] ) : nullptr;
+			const float rng = mf ? show.AttrRangeDeg( *mf, m.attr ) : 0.0f;
+			if( rng > 0 )
+			{
+				float dl = ( m.lo - 0.5f ) * rng, dh = ( m.hi - 0.5f ) * rng;
+				if( ls::rs::DragFloatRange2( "##rd", &dl, &dh, 0.5f, -rng * 0.5f, rng * 0.5f, "%.0f°", "%.0f°" ) )
+				{
+					m.lo       = Saturate( 0.5f + dl / rng );
+					m.hi       = Saturate( 0.5f + dh / rng );
+					show.dirty = true;
+				}
+				ImGui::SetItemTooltip( "%s", L( "Bereich in Grad ab Mitte (Pan/Tilt)" ) );
+			}
+			else if( ls::rs::DragFloatRange2( "##r", &m.lo, &m.hi, 0.005f, 0, m.target == MidiTarget::Master ? 10.0f : 1.0f, "%.2f", "%.2f" ) ) show.dirty = true;
 			if( m.target == MidiTarget::Master ) ImGui::SetItemTooltip( L( "Master: 1.00 = 100 %%, bis 10.00 = 1000 %%" ) );
 			ImGui::TableNextColumn();
 			ImGui::Checkbox( "##i", &m.invert );
@@ -437,12 +472,12 @@ void App::TabOutput()
 	}
 }
 
-//---------------------------------------------------------------- Ableton bridge
+//---------------------------------------------------------------- bridge (Ableton devices, Lightbrick, ...)
 void App::TabBridge()
 {
 	ImGui::Separator();
-	ImGui::TextUnformatted( L( "Ableton-Bridge (Max for Live)" ) );
-	if( ImGui::Checkbox( L( "Ableton-Bridge aktiv" ), &bridgeOn ) )
+	ImGui::TextUnformatted( L( "Bridge" ) );
+	if( ImGui::Checkbox( L( "Bridge aktiv" ), &bridgeOn ) )
 	{
 		if( bridgeOn ) show.output.oscIn = true;
 		SaveSettings();
@@ -462,7 +497,7 @@ void App::TabBridge()
 		else ImGui::TextColored( ImVec4( 1, 0.55f, 0.3f, 1 ), "%s", bridge.error.empty() ? L( "startet..." ) : bridge.error.c_str() );
 	}
 	const auto clients = bridge.Clients();
-	if( clients.empty() ) ImGui::TextDisabled( L( "Keine Ableton-Geräte verbunden." ) );
+	if( clients.empty() ) ImGui::TextDisabled( L( "Keine Geräte verbunden." ) );
 	for( auto& c : clients )
 	{
 		const double ago = Now() - c.lastSeen;
@@ -832,6 +867,30 @@ void App::TargetsWindow()
 }
 
 //---------------------------------------------------------------- stage
+//2.1 reflection of one surface: on/off, strength, matt <-> glossy. Only shown by quality "high": greyed out otherwise.
+bool App::SurfaceUi( const char* id, const char* label, Surface& sf )
+{
+	bool ch = false;
+	ImGui::PushID( id );
+	const bool off = quality_ < 2;
+	ImGui::BeginDisabled( off );
+	ch |= ImGui::Checkbox( label, &sf.reflect );
+	if( off ) ImGui::SetItemTooltip( "%s", L( "Nur bei Darstellungsqualität Hoch (Viewport-Leiste)" ) );
+	else ImGui::SetItemTooltip( "%s", L( "Boden spiegelt Lichtkegel, Lampen und Bühne (Darstellung, kein DMX)" ) );
+	ImGui::SameLine( std::max( ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + 8 * ui, 120 * ui ) );//sliders line up
+	ImGui::BeginDisabled( !sf.reflect );
+	ImGui::SetNextItemWidth( 80 * ui );
+	ch |= ls::rs::SliderFloat( "##amt", &sf.amount, 0, 1, L( "Stärke %.2f" ) );
+	ImGui::SetItemTooltip( "%s", L( "Stärke der Spiegelung" ) );
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth( 80 * ui );
+	ch |= ls::rs::SliderFloat( "##gloss", &sf.gloss, 0, 1, L( "Glanz %.2f" ) );
+	ImGui::SetItemTooltip( "%s", L( "Oberfläche: 0 = matt (weich verschwommen), 1 = glänzend (scharf wie nasser Boden)" ) );
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+	ImGui::PopID();
+	return ch;
+}
 void App::TabStage()
 {
 	StageCfg& s = show.stage;
@@ -851,6 +910,9 @@ void App::TabStage()
 	ch |= ImGui::ColorEdit3( L( "Bodenfarbe" ), &s.floorColor.x, ImGuiColorEditFlags_NoInputs );
 	ImGui::SameLine();
 	ch |= ImGui::ColorEdit3( L( "Wandfarbe" ), &s.wallColor.x, ImGuiColorEditFlags_NoInputs );
+	ImGui::SeparatorText( quality_ < 2 ? L( "Spiegelung (nur Qualität Hoch)" ) : L( "Spiegelung" ) );
+	ch |= SurfaceUi( "floor", L( "Boden" ), s.floorSurf );
+	ch |= SurfaceUi( "deck", L( "Podest" ), s.deckSurf );
 	ch |= ls::rs::SliderFloat( "Haze", &s.haze, 0, 1 );
 	ch |= ls::rs::SliderFloat( L( "Haze-Struktur" ), &s.hazeNoise, 0, 1 );
 	ImGui::SeparatorText( L( "Umgebung" ) );
@@ -1019,6 +1081,7 @@ void App::TabStage()
 			ImGui::SetNextItemWidth( 80 * ui );
 			ch |= ls::rs::SliderFloat( "##edgel", &d.edgeLevel, 0, 4, L( "LED %.1f" ) );
 			ImGui::SetItemTooltip( L( "LED-Kante vorne (rund: ringsum), 0 = aus" ) );
+			ch |= SurfaceUi( "surf", L( "Spiegelung" ), d.surf );
 			ImGui::TreePop();
 		}
 		ImGui::PopID();
@@ -1341,6 +1404,29 @@ void App::TabSnapshots()
 			ImGui::SetItemTooltip( L( "Ein- und Ausblendzeit" ) );
 			OscContext( base + "/fade" );
 			ImGui::TableNextColumn();
+			{
+				//grip: drag the snapshot onto the Time Line = a block at the mouse (not on the Start button: a hasty click must always start)
+				const float gw = 16 * ui, gh = ImGui::GetFrameHeight();
+				const ImVec2 gp = ImGui::GetCursorScreenPos();
+				ImGui::InvisibleButton( "##grip", ImVec2( gw, gh ) );
+				UiMark( "snap.grip." + std::to_string( i ), ImGui::GetItemRectMin(), ImGui::GetItemRectMax() );
+				const bool gHov = ImGui::IsItemHovered() || ImGui::IsItemActive();
+				if( gHov ) ImGui::SetMouseCursor( ImGuiMouseCursor_Hand );
+				for( int gy = 0; gy < 3; ++gy )
+					for( int gx = 0; gx < 2; ++gx )
+						ImGui::GetWindowDrawList()->AddCircleFilled( ImVec2( gp.x + ( 5 + gx * 5 ) * ui, gp.y + gh * 0.5f + ( gy - 1 ) * 5 * ui ), 1.4f * ui, gHov ? IM_COL32( 255, 190, 100, 255 ) : IM_COL32( 130, 138, 155, 255 ) );
+				ImGui::SetItemTooltip( "%s", L( "Auf die Time Line ziehen (Tab oder Fenster) = Block an der Maus" ) );
+				if( ImGui::BeginDragDropSource() )
+				{
+					const TlClipDrag d{ (int)TlClipKind::Snapshot, s.uid, 0 };
+					ImGui::SetDragDropPayload( "LS_TLCLIP", &d, sizeof( d ) );
+					ImGui::TextUnformatted( s.name.c_str() );
+					ImGui::TextDisabled( "%s", L( "Auf die Time Line ziehen (Tab oder Fenster) = Block an der Maus" ) );
+					ImGui::EndDragDropSource();
+				}
+				ImGui::SameLine( 0, 4 * ui );
+				ImGui::AlignTextToFramePadding();
+			}
 			{
 				std::vector< int > sids;
 				for( auto& f : s.fix ) sids.push_back( f.id );

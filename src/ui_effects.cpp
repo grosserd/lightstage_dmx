@@ -574,7 +574,7 @@ void App::TabEffects()
 		if( ls::rs::SliderFloat( "##fxs", &show.fxSpeed, 0.25f, 4, "Tempo x%.2f", ImGuiSliderFlags_Logarithmic ) ) show.dirty = true;
 		OscContext( "/ls/fx/speed" );
 		ImGui::SameLine();
-		if( ImGui::Checkbox( L( "Halt" ), &show.fxHold ) ) show.dirty = true;
+		if( ls::Chip( L( "Halt" ), &show.fxHold, ImVec4( 1.0f, 0.62f, 0.2f, 1 ) ) ) show.dirty = true;
 		OscContext( "/ls/fx/hold" );
 		ImGui::SameLine();
 		//beat lamps
@@ -656,7 +656,7 @@ void App::TabEffects()
 		}
 		//programs: whole looks from several effects
 		ImGui::Dummy( ImVec2( 0, 4 * ui ) );
-		if( ImGui::CollapsingHeader( L( "Programme" ) ) )
+		if( ls::SectionHeader( L( "Programme" ) ) )
 		{
 			const float progRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
 			const int active      = ActiveProgram( show );
@@ -742,6 +742,16 @@ void App::TabEffects()
 			char lb[ 160 ];
 			snprintf( lb, sizeof( lb ), "##sel%d", e.id );
 			if( ImGui::InvisibleButton( lb, ImVec2( std::max( 10.0f, a.x + w - la.x - 4 * ui ), ImGui::GetFrameHeight() ) ) ) { show.fxSelId = e.id; delCtx_ = 2; }
+			UiMark( "fx.row." + std::to_string( i ), ImGui::GetItemRectMin(), ImGui::GetItemRectMax() );
+			//drag & drop: onto the Time Line = an effect block at the mouse
+			if( ImGui::BeginDragDropSource() )
+			{
+				const TlClipDrag d{ (int)TlClipKind::Effect, 0, e.id };
+				ImGui::SetDragDropPayload( "LS_TLCLIP", &d, sizeof( d ) );
+				ImGui::TextUnformatted( e.name.c_str() );
+				ImGui::TextDisabled( "%s", L( "Auf die Time Line ziehen (Tab oder Fenster) = Block an der Maus" ) );
+				ImGui::EndDragDropSource();
+			}
 			if( ImGui::BeginPopupContextItem( "ectx" ) )
 			{
 				if( ImGui::MenuItem( L( "Lampen auswählen" ) ) ) sel = FxFixtureIds( show, e );

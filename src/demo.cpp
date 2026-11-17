@@ -63,6 +63,124 @@ bool App::AimAt( Show& s, FixtureInst& f, const V3& target )
 	return true;
 }
 
+//2.1 start-up demo: a small jazz club (wooden room, round stage, curtain, piano, bass, drums, bistro tables, bar
+//as one imported 3D model: assets\jazzclub\jazzclub.glb, built in Blender), warm light, little haze
+void App::BuildJazzDemo()
+{
+	show.Clear();
+	show.AddUniverse();
+	StageCfg& st  = show.stage;
+	st.width      = 11;
+	st.depth      = 6;
+	st.deck       = false;
+	st.deckHeight = 0.4f;
+	st.wallHeight = 4.2f;
+	st.haze       = 0.14f;
+	st.hazeNoise  = 0.6f;
+	st.ambient    = 0.012f;
+	st.envLight   = 0.9f;
+	st.ambientColor = V3( 1.0f, 0.78f, 0.55f );
+	st.floorColor = V3( 0.11f, 0.06f, 0.03f );
+	st.wallColor  = V3( 0.05f, 0.025f, 0.015f );
+	st.floorSurf  = { true, 0.35f, 0.55f };//polished wooden floor (visible with quality "high")
+	st.deckSurf   = { true, 0.3f, 0.5f };
+	Deck dk;
+	dk.name   = L( "Bühne" );
+	dk.shape  = 1;
+	dk.z      = -1.85f;
+	dk.width  = 7.2f;
+	dk.depth  = 3.4f;
+	dk.height = 0.4f;
+	dk.ownColor = true;
+	dk.color  = V3( 0.16f, 0.08f, 0.035f );
+	dk.edge   = V3( 1.0f, 0.55f, 0.15f );
+	dk.edgeLevel = 0.5f;
+	dk.surf   = { true, 0.3f, 0.6f };
+	st.decks.push_back( dk );
+	//furniture, instruments, curtain, bar, walls
+	{
+		ModelObj m;
+		m.path = exeDir + "\\assets\\jazzclub\\jazzclub.glb";
+		m.name = "Jazzclub";
+		std::string err;
+		if( ren.EnsureModel( m, &err ) ) show.models.push_back( m );
+		else Log( "jazz club model: %s %s", m.path.c_str(), err.c_str() );
+	}
+	auto truss = [ & ]( V3 a, V3 b ) { Truss t; t.a = a; t.b = b; show.trusses.push_back( t ); };
+	truss( V3( -4.2f, 3.7f, 0.9f ), V3( 4.2f, 3.7f, 0.9f ) );
+	truss( V3( -3.4f, 3.7f, -2.9f ), V3( 3.4f, 3.7f, -2.9f ) );
+	const FixtureDef* spot = lib.Find( "generic/generic/moving-head-spot" );
+	const FixtureDef* wash = lib.Find( "generic/generic/moving-head-wash" );
+	const FixtureDef* par  = lib.Find( "generic/generic/led-par-rgbwauv" );
+	auto next = [ & ]( const FixtureDef* d ) { return d ? std::max( 1, show.FreeAddress( 1, d->modes[ 0 ].Footprint() ) ) : 1; };
+	const float hy = 3.7f - 0.165f;
+	std::vector< int > fronts, backs, spots, ups;
+	const float fx[ 4 ] = { -3.0f, -1.0f, 1.0f, 3.0f };
+	for( int i = 0; i < 4 && wash; ++i ) fronts.push_back( AddFixture( wash, 0, 1, next( wash ), V3( fx[ i ], hy, 0.9f ), V3( 180, 0, 0 ), L( "Front " ) + std::to_string( i + 1 ) )->id );
+	for( int i = 0; i < 2 && spot; ++i ) spots.push_back( AddFixture( spot, 0, 1, next( spot ), V3( i ? 2.0f : -2.0f, hy, 0.9f ), V3( 180, 0, 0 ), "Spot " + std::to_string( i + 1 ) )->id );
+	for( int i = 0; i < 3 && wash; ++i ) backs.push_back( AddFixture( wash, 0, 1, next( wash ), V3( -2.6f + i * 2.6f, hy, -2.9f ), V3( 180, 0, 0 ), L( "Gegenlicht " ) + std::to_string( i + 1 ) )->id );
+	for( int i = 0; i < 4 && par; ++i ) ups.push_back( AddFixture( par, 0, 1, next( par ), V3( -3.0f + i * 2.0f, 0.42f, -3.05f ), V3( -12, 0, 0 ), L( "Vorhang " ) + std::to_string( i + 1 ) )->id );
+	show.AutoMount();
+	show.UpdateMounts();
+	auto F    = [ & ]( int id ) { return show.FindFixture( id ); };
+	auto all  = [ & ]() { std::vector< int > r; for( auto& f : show.fixtures ) r.push_back( f.id ); return r; };
+	//look: warm front light, amber/blue back light, red curtain, gobo spot on the piano
+	auto look = [ & ]( float front, V3 back, V3 curtain, float piano ) {
+		const V3 aim[ 4 ] = { V3( -1.5f, 0.6f, -2.0f ), V3( -0.4f, 1.2f, -1.2f ), V3( 0.6f, 1.2f, -2.0f ), V3( 2.0f, 0.8f, -2.2f ) };
+		for( size_t i = 0; i < fronts.size(); ++i )
+		{
+			FixtureInst& f = *F( fronts[ i ] );
+			show.Home( f );
+			show.SetColor( f, V3( 1.0f, 0.62f, 0.3f ) );
+			show.SetAttr( f, Attr::Dimmer, front );
+			show.SetAttr( f, Attr::Zoom, 0.35f );
+			AimAt( show, f, aim[ i ] );
+		}
+		for( size_t i = 0; i < backs.size(); ++i )
+		{
+			FixtureInst& f = *F( backs[ i ] );
+			show.Home( f );
+			show.SetColor( f, i == 1 ? V3( 1.0f, 0.45f, 0.1f ) : back );
+			show.SetAttr( f, Attr::Dimmer, 0.8f );
+			show.SetAttr( f, Attr::Zoom, 0.45f );
+			AimAt( show, f, V3( -2.4f + i * 2.4f, 0.0f, 0.6f ) );
+		}
+		for( size_t i = 0; i < spots.size(); ++i )
+		{
+			FixtureInst& f = *F( spots[ i ] );
+			show.Home( f );
+			show.SetAttr( f, Attr::Dimmer, i == 0 ? piano : 0.55f );
+			SetNamed( show, f, "Color Wheel", i == 0 ? 8 * 8 + 4 : 2 * 8 + 4 );//CTO / orange
+			SetNamed( show, f, "Gobo Wheel", i == 0 ? 0 : 3 * 8 + 4 );         //open / breakup
+			SetNamed( show, f, "Zoom", i == 0 ? 20 : 120 );
+			SetNamed( show, f, "Focus", 120 );
+			AimAt( show, f, i == 0 ? V3( -1.5f, 1.1f, -2.0f ) : V3( 0.5f, 1.8f, -3.3f ) );
+		}
+		for( size_t i = 0; i < ups.size(); ++i )
+		{
+			FixtureInst& f = *F( ups[ i ] );
+			show.SetAttr( f, Attr::Dimmer, 1 );
+			show.SetColor( f, curtain );
+			show.SetAttr( f, Attr::Shutter, 0 );
+		}
+	};
+	look( 0.75f, V3( 0.15f, 0.25f, 1.0f ), V3( 1.0f, 0.12f, 0.02f ), 0.0f );
+	int s1 = show.TakeSnapshotOf( L( "Set 1" ), all(), false, false );
+	look( 0.25f, V3( 0.35f, 0.05f, 1.0f ), V3( 0.6f, 0.0f, 0.4f ), 1.0f );
+	int s2 = show.TakeSnapshotOf( L( "Piano-Solo" ), all(), false, false );
+	look( 0.4f, V3( 0.05f, 0.1f, 0.7f ), V3( 0.3f, 0.05f, 0.9f ), 0.35f );
+	int s3 = show.TakeSnapshotOf( L( "Ballade" ), all(), false, false );
+	for( int i : { s1, s2, s3 } )
+		if( i >= 0 ) show.snapshots[ i ].fade = 3.0f;
+	look( 0.9f, V3( 0.15f, 0.25f, 1.0f ), V3( 1.0f, 0.12f, 0.02f ), 0.0f );
+	show.colorMix = 1;
+	show.dirty    = false;
+	cam.yaw       = 8;
+	cam.pitch     = 11;
+	cam.dist      = 8.0f;
+	cam.target    = V3( 0, 1.1f, -1.3f );
+}
+
 void App::BuildDemo()
 {
 	show.Clear();

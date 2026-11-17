@@ -19,6 +19,34 @@ struct LbxOptions
 	int fps     = 40;
 	bool visual = true;//VIS0 stream (3D view on the Brick)
 	int substeps = 5;  //effect steps per frame
+	bool fxLayers = true;//per effect of the show: layer "off" (show without it) and "on" (forced on), chunks EFFX/FXLD/FXLV
+};
+//state of the show at the start of the export: every effect layer pass starts from exactly this state
+struct LbxState
+{
+	std::vector< DmxFrame > dmx;
+	std::vector< std::array< int16_t, 512 > > fxOut, snapOut;
+	bool fxAny = false, snapAny = false;
+	uint32_t snapSeq = 0;
+	std::vector< std::array< uint32_t, 512 > > grpSeq, progSeq;
+	std::vector< Effect > effects;
+	std::vector< Snapshot > snapshots;
+	std::vector< GroupFader > groups;
+	Tempo tempo;
+	int cueCur = -1;
+	double cueT = 0;
+	std::vector< FixtureState > st;
+	SimGlobals sim;
+	TlRuntime tlrt;
+};
+//one effect layer: frame deltas (int16 per DMX byte, int16 per VIS field) against the main pass
+struct LbxLayer
+{
+	int fx = 0;      //effect id
+	bool on = false; //false: show without the effect, true: effect forced on
+	bool any = false;//some delta != 0
+	std::vector< uint8_t > dmxData, visData, prevDmx, prevVis;
+	std::vector< uint32_t > dmxKeys, visKeys;
 };
 struct LbxJob
 {
@@ -41,6 +69,17 @@ struct LbxJob
 	//for the self test: keep the decoded frames
 	bool keepFrames = false;
 	std::vector< std::vector< uint8_t > > keptDmx;
+	//effect layers: after the main pass one pass per layer (same frames, from the same start state)
+	LbxState start;
+	std::vector< std::vector< std::pair< int, int > > > fxActive;//per effect (show order): frame ranges in which it drives
+	std::vector< LbxLayer > layers;
+	int layer = -1;         //-1 = main pass, else the layer being computed
+	int layerFrame = 0;
+	size_t mainAt = 0, mainVisAt = 0;//sequential decoding of the main pass
+	std::vector< uint8_t > mainCur, mainVisCur;
+	std::vector< uint8_t > visKind;//per VIS byte: 0 u8 field, 1 first byte of an int16 field, 2 second byte
+	int Work() const { return layer < 0 ? frame : frame + layer * frames + layerFrame; }
+	int WorkTotal() const { return frames * ( 1 + ( layer < 0 ? 0 : (int)layers.size() ) ); }
 };
 bool LbxBegin( Show& s, const LbxOptions& o, const std::string& path, LbxJob& j );
 bool LbxStep( Show& s, SimGlobals& sim, LbxJob& j, double budgetSec );//false = finished (or failed: j.err)
@@ -51,6 +90,14 @@ bool LbxExport( Show& s, SimGlobals& sim, const LbxOptions& o, const std::string
 struct LbxFile
 {
 	Json info, cues, scene, patch;//patch: the show's setup (PTCH chunk, LightStage 2.0+; null in older files)
+	Json effects;                 //EFFX chunk (null in older files)
+	struct Layer
+	{
+		int fx = 0;
+		bool on = false;
+		std::vector< std::vector< uint8_t > > dmx, vis;//decoded delta frames (int16 little endian)
+	};
+	std::vector< Layer > layers;
 	int fps = 0, frames = 0, dmxBytes = 0, visBytes = 0, keyEvery = 0;
 	std::vector< std::vector< uint8_t > > dmx, vis;//decoded frames
 	size_t fileBytes = 0;

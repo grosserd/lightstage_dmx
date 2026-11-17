@@ -2,7 +2,9 @@
 // (TouchDesigner, Max, Resolume, Ableton via Max for Live / Connection Kit, phone apps).
 //   /ls/fixture/<id>/<attribute> v        attribute name as shown in the inspector, e.g. dimmer, red, pan, zoom
 //   /ls/fixture/<id>/<attribute>/<head> v pixel fixtures: one cell (1-based)
-//   /ls/fixture/<id>/color r g b          additive colour in one message
+//   /ls/fixture/<id>/color r g b          colour in one message (2.1: any colour lamp - RGB/W/A/L, CMY, wheel)
+//   /ls/fixture/<id>/kelvin k             colour temperature (k > 1: Kelvin, else 0..1 = 2000..10000 K)
+//   /ls/fixture/<id>/pan_deg d            pan / tilt in degrees from the centre (also tilt_deg)
 //   /ls/dmx/<universe>/<channel> v        float 0..1 or int 0..255
 //   /ls/master v   /ls/haze v   /ls/snapshot n (1-based)
 // v: float or int; floats are 0..1. A bundle (#bundle) may carry many messages.

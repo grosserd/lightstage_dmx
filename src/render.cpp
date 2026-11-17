@@ -13,6 +13,7 @@ layout(std140, binding = 0) uniform LightBlock { Light lights[96]; };
 uniform sampler2DArray uGobo;
 uniform sampler2DArrayShadow uShadow;
 uniform float uShadowTexel;
+uniform int uHigh;//2.1 quality "high": soft shadows, GGX highlights, reflectivity for the reflection pass
 float h3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vnoise(vec3 x)
 {
@@ -117,6 +118,16 @@ float ShadowPcf(Light l, vec3 p, float bias)
 	vec3 s = sc.xyz / sc.w * 0.5 + 0.5;
 	if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return 1.0;
 	float r = 0.0;
+	if (uHigh != 0)
+	{
+		//16 rotated Poisson taps: soft penumbra without blocky steps
+		const vec2 pd[16] = vec2[16](vec2(-0.94, -0.40), vec2(0.95, -0.77), vec2(-0.09, -0.93), vec2(0.34, 0.29), vec2(-0.92, 0.46), vec2(0.71, 0.19), vec2(-0.48, -0.70), vec2(0.19, -0.33),
+			vec2(-0.29, 0.97), vec2(0.86, 0.68), vec2(-0.69, 0.04), vec2(0.40, 0.88), vec2(0.09, 0.62), vec2(-0.31, 0.32), vec2(0.62, -0.47), vec2(-0.03, 0.05));
+		float a = 6.2831853 * h3(p * 97.31);//per-point rotation (shared with vertex shaders: no gl_FragCoord here)
+		mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+		for (int i = 0; i < 16; ++i) r += texture(uShadow, vec4(s.xy + rot * pd[i] * (1.8 * uShadowTexel), l.color.w, s.z - bias));
+		return r / 16.0;
+	}
 	for (int y = -1; y <= 1; ++y)
 		for (int x = -1; x <= 1; ++x)
 			r += texture(uShadow, vec4(s.xy + vec2(x, y) * uShadowTexel, l.color.w, s.z - bias));
@@ -183,6 +194,20 @@ uniform vec3 uMoonCol;
 uniform mat4 uMoonVP;
 uniform float uMoonLayer;
 out vec4 oColor;
+//GGX highlight with Schlick Fresnel (quality "high"): roughness from the gloss value, energy roughly like Blinn-Phong
+float Ggx(vec3 N, vec3 H, vec3 V, vec3 L, float k)
+{
+	float rough = mix(0.55, 0.12, clamp(k * 2.5, 0.0, 1.0));
+	float a2 = rough * rough * rough * rough;
+	float nh = max(dot(N, H), 0.0);
+	float dd = nh * nh * (a2 - 1.0) + 1.0;
+	float D = a2 / (3.14159 * dd * dd);
+	float nv = max(dot(N, V), 0.05), nl = max(dot(N, L), 0.05);
+	float kk = (rough + 1.0) * (rough + 1.0) / 8.0;
+	float G = nv / (nv * (1.0 - kk) + kk) * nl / (nl * (1.0 - kk) + kk);
+	float F = 0.04 + 0.96 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+	return D * G * F / (4.0 * nv * nl) * clamp(k * 6.0, 0.15, 1.0) * 3.14159;
+}
 //procedural ground types (outdoor): 1 grass, 2 concrete, 3 asphalt, 4 earth/gravel, 5 wooden floor
 void Ground(int gt, vec2 xz, inout vec3 alb, inout float spec)
 {
@@ -233,8 +258,13 @@ void main()
 		if (uUseTex == 1) alb *= tc.rgb;
 	}
 	float specK = vSpec;
-	int gt = int(vEmi.a + 0.5) - 1;//-1 = no ground, 0 = hall floor with grid, 1.. = outdoor grounds
+	//flag: ground type + 64 * reflection code (2.1, see BuildScene)
+	float rCode = floor(vEmi.a / 64.0 + 1e-4);
+	int gt = int(vEmi.a - rCode * 64.0 + 0.5) - 1;//-1 = no ground, 0 = hall floor with grid, 1.. = outdoor grounds
+	float rAmt = 0.0, rGloss = 0.0;
+	if (rCode > 0.5) { float c = rCode - 1.0; rGloss = floor(c / 32.0 + 1e-4) / 31.0; rAmt = (c - floor(c / 32.0 + 1e-4) * 32.0) / 31.0; }
 	if (gt >= 1) Ground(gt, vPos.xz, alb, specK);
+	if (uHigh != 0 && rCode > 0.5) specK = mix(0.02, 0.75, rGloss);//reflective surface: gloss slider = highlight too
 	vec3 N = normalize(vNrm);
 	vec3 V = normalize(uCamPos - vPos);
 	if (dot(N, V) < 0.0) N = -N;
@@ -257,7 +287,8 @@ void main()
 		vec3 E = l.color.rgb * (prof * sh / max(d2, 0.04));
 		diff += E * ndl;
 		vec3 H = normalize(L + V);
-		spec += E * pow(max(dot(N, H), 0.0), shin) * ndl * specK * 2.0;
+		if (uHigh != 0) spec += E * (Ggx(N, H, V, L, specK) * ndl);
+		else spec += E * pow(max(dot(N, H), 0.0), shin) * ndl * specK * 2.0;
 	}
 	//video projectors
 	for (int i = 0; i < uNumProj; ++i)
@@ -312,7 +343,9 @@ void main()
 		float line = 1.0 - min(min(g.x, g.y), 1.0);
 		c += vec3(0.007, 0.0075, 0.009) * uEnv * line * clamp(1.0 - length(vPos - uCamPos) / 60.0, 0.0, 1.0);
 	}
-	oColor = vec4(c, 1.0);
+	//alpha: reflectivity for the screen-space reflections of quality "high" (floors, decks, glossy parts)
+	//alpha (quality "high"): -1 = no reflection, else gloss step 0..15 + amount * 0.98
+	oColor = vec4(c, uHigh != 0 ? (rCode > 0.5 ? floor(rGloss * 15.0 + 0.5) + rAmt * 0.98 : -1.0) : 1.0);
 }
 )GLSL";
 
@@ -618,9 +651,111 @@ uniform float uFog;
 uniform vec3 uFogCol;
 out vec4 oColor;
 uniform vec2 uBeamTexel;
+uniform int uHigh;
+uniform mat4 uVP;
+uniform vec2 uTexel;
+vec3 WorldAt(vec2 uv)
+{
+	float dz = texture(uDepth, uv).r;
+	vec4 p = uInvVP * vec4(uv * 2.0 - 1.0, dz * 2.0 - 1.0, 1.0);
+	return p.xyz / p.w;
+}
+float Rnd(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+vec3 BeamAt(vec2 uv) { return texture(uBeam, uv).rgb; }
 void main()
 {
-	vec3 sc = texture(uScene, vUv).rgb;
+	vec4 s4 = texture(uScene, vUv);
+	vec3 sc = s4.rgb;
+	float dz0 = texture(uDepth, vUv).r;
+	if (uHigh != 0 && dz0 < 0.99999)
+	{
+		//normal from the depth buffer (smaller step side: no seams at edges)
+		vec3 P = WorldAt(vUv);
+		vec3 px = WorldAt(vUv + vec2(uTexel.x, 0)) - P, nx = P - WorldAt(vUv - vec2(uTexel.x, 0));
+		vec3 py = WorldAt(vUv + vec2(0, uTexel.y)) - P, ny = P - WorldAt(vUv - vec2(0, uTexel.y));
+		vec3 dx = dot(px, px) < dot(nx, nx) ? px : nx, dy = dot(py, py) < dot(ny, ny) ? py : ny;
+		vec3 N = normalize(cross(dx, dy));
+		vec3 V = normalize(uCamPos - P);
+		if (dot(N, V) < 0.0) N = -N;
+		float dist = length(uCamPos - P);
+		float jit = Rnd(gl_FragCoord.xy);
+		//ambient occlusion: 12 points in the hemisphere, compared with the depth buffer (contact shadows)
+		{
+			vec3 T = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0, 1, 0)) : cross(N, vec3(1, 0, 0)));
+			vec3 B = cross(N, T);
+			float occ = 0.0, rad = clamp(dist * 0.03, 0.15, 0.6);
+			for (int i = 0; i < 12; ++i)
+			{
+				float a = 6.2831853 * (float(i) + jit) / 12.0, r = rad * (0.25 + 0.75 * fract(float(i) * 0.618 + jit));
+				float h = 0.15 + 0.85 * fract(float(i) * 0.379 + jit * 1.7);
+				vec3 q = P + (T * cos(a) + B * sin(a)) * r * sqrt(1.0 - h * h) + N * r * h;
+				vec4 c = uVP * vec4(q, 1.0);
+				if (c.w <= 0.0) continue;
+				vec2 uv = c.xy / c.w * 0.5 + 0.5;
+				if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) continue;
+				vec3 S = WorldAt(uv);
+				float sd = length(uCamPos - S), qd = length(uCamPos - q);
+				if (sd < qd - 0.02) occ += smoothstep(0.0, 1.0, rad / max(abs(qd - sd), 1e-3)) * (qd - sd < rad * 2.0 ? 1.0 : 0.0);
+			}
+			float ao = 1.0 - occ / 12.0;
+			float lum = dot(sc, vec3(0.2126, 0.7152, 0.0722));
+			sc *= mix(1.0, ao * ao, 0.75 * (1.0 - smoothstep(2.0, 12.0, lum)));//light sources stay bright
+		}
+		//screen-space reflections on glossy, mostly upward surfaces (stage floor, decks): scene + haze beams
+		float rGloss = floor(s4.a + 1e-3) / 15.0, refl = fract(s4.a + 1e-3) / 0.98;
+		if (s4.a >= 0.0 && refl > 0.005 && N.y > 0.6)
+		{
+			//floors and decks are flat: the depth-buffer normal wobbles at grazing angles, so snap it
+			if (N.y > 0.9) N = vec3(0.0, 1.0, 0.0);
+			vec3 R = reflect(-V, N);
+			float F = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+			float k = refl * mix(0.35, 1.0, F) * 1.3;
+			vec3 hit = vec3(0.0), haze = vec3(0.0);
+			float found = 0.0;
+			float t = 0.05, stepLen = 0.1;
+			for (int i = 0; i < 40; ++i)
+			{
+				vec3 q = P + R * t;
+				vec4 c = uVP * vec4(q, 1.0);
+				if (c.w <= 0.0) break;
+				vec2 uv = c.xy / c.w * 0.5 + 0.5;
+				if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) break;
+				float sz = texture(uDepth, uv).r;
+				float sd = sz < 0.99999 ? length(uCamPos - WorldAt(uv)) : 1e4, qd = length(uCamPos - q);
+				if (qd > sd && qd - sd < max(0.3, stepLen * 2.0))
+				{
+					//refine between the last two steps (no stair steps), then a soft lookup (floors are not mirrors)
+					float lo = t - stepLen, hi = t;
+					for (int j = 0; j < 6; ++j)
+					{
+						float m = 0.5 * (lo + hi);
+						vec3 qm = P + R * m;
+						vec4 cm = uVP * vec4(qm, 1.0);
+						vec2 um = cm.xy / cm.w * 0.5 + 0.5;
+						if (length(uCamPos - qm) > length(uCamPos - WorldAt(um))) hi = m; else lo = m;
+					}
+					vec4 ch = uVP * vec4(P + R * hi, 1.0);
+					vec2 uh = ch.xy / ch.w * 0.5 + 0.5;
+					//glossy blur growing with the distance (8 taps on a rotated ring + centre)
+					float br = clamp(mix(0.03, 0.0012, rGloss) + hi * 0.003 * (1.0 - rGloss), 0.0012, 0.045);
+					hit = texture(uScene, uh).rgb * 0.2;
+					for (int j = 0; j < 8; ++j)
+					{
+						float a = 0.785398 * float(j) + jit * 0.785398;
+						hit += texture(uScene, uh + vec2(cos(a), sin(a) * 1.6) * br * (0.5 + 0.5 * fract(float(j) * 0.618))).rgb * 0.1;
+					}
+					vec2 e = smoothstep(0.0, 0.1, uh) * smoothstep(0.0, 0.1, 1.0 - uh);
+					found = e.x * e.y * (1.0 - smoothstep(3.0, 20.0, hi)) * smoothstep(0.0, 0.25, dot(R, N));
+					break;
+				}
+				//haze beams crossed by the reflected ray (they have no depth of their own)
+				haze += BeamAt(uv) * stepLen;
+				t += stepLen;
+				stepLen *= 1.12;
+			}
+			sc += (hit * found + haze * 0.08) * k * 0.5;
+		}
+	}
 	if (uFog > 0.0)
 	{
 		//distance haze outdoors (geometry only, the sky already has its colour)
@@ -941,15 +1076,7 @@ bool Renderer::Init( std::string* err )
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 	}
 	//shadow array
-	glGenTextures( 1, &shadowTex_ );
-	glBindTexture( GL_TEXTURE_2D_ARRAY, shadowTex_ );
-	glTexStorage3D( GL_TEXTURE_2D_ARRAY, 1, GL_DEPTH_COMPONENT24, shadowRes, shadowRes, maxShadows_ );
-	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE );
-	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+	EnsureShadowRes( shadowRes );
 	glGenFramebuffers( 1, &shadowFbo_ );
 	UploadGobos();
 	GLenum e = glGetError();
@@ -957,6 +1084,22 @@ bool Renderer::Init( std::string* err )
 	return true;
 }
 
+//shadow array at the resolution of the quality level (re-created when it changes)
+void Renderer::EnsureShadowRes( int res )
+{
+	if( shadowTex_ && res == shadowCur_ ) return;
+	if( shadowTex_ ) glDeleteTextures( 1, &shadowTex_ );
+	shadowCur_ = res;
+	glGenTextures( 1, &shadowTex_ );
+	glBindTexture( GL_TEXTURE_2D_ARRAY, shadowTex_ );
+	glTexStorage3D( GL_TEXTURE_2D_ARRAY, 1, GL_DEPTH_COMPONENT24, res, res, maxShadows_ );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL );
+}
 void Renderer::Shutdown()
 {
 	scene_.Destroy();
@@ -1048,7 +1191,7 @@ void Renderer::Box( const M4& m, const V3& col, float spec, const V3& emi, float
 	i.emi[ 3 ] = flag;
 	boxes_.push_back( i );
 }
-void Renderer::Cyl( const M4& m, const V3& col, float spec, const V3& emi )
+void Renderer::Cyl( const M4& m, const V3& col, float spec, const V3& emi, float flag )
 {
 	Inst i;
 	i.m        = m;
@@ -1059,7 +1202,7 @@ void Renderer::Cyl( const M4& m, const V3& col, float spec, const V3& emi )
 	i.emi[ 0 ] = emi.x;
 	i.emi[ 1 ] = emi.y;
 	i.emi[ 2 ] = emi.z;
-	i.emi[ 3 ] = 0;
+	i.emi[ 3 ] = flag;
 	cyls_.push_back( i );
 }
 
@@ -1191,15 +1334,21 @@ void Renderer::BuildScene( Show& show, const std::vector< int >& sel, float time
 	glows_.clear();
 	lightPower_.clear();
 	const StageCfg& st = show.stage;
+	//2.1 reflection of a surface, packed above the ground type: flag + 64 * (1 + amount 0..31 + 32 * gloss 0..31)
+	auto surfFlag = []( float base, const Surface& sf ) {
+		if( !sf.reflect || sf.amount <= 0.001f ) return base;
+		const int code = 1 + (int)lroundf( Saturate( sf.amount ) * 31 ) + 32 * (int)lroundf( Saturate( sf.gloss ) * 31 );
+		return base + 64.0f * code;
+	};
 	//floor, deck, wall
 	if( st.floor )
 	{
 		const float gs = Clamp( st.groundSize, 10.0f, 1000.0f );
-		Box( Mul( Translate( V3( 0, -0.05f, 0 ) ), Scale( V3( gs, 0.1f, gs ) ) ), st.floorColor, 0.25f, V3( 0, 0, 0 ), 1.0f + (float)Clamp( st.ground, 0, 5 ) );
+		Box( Mul( Translate( V3( 0, -0.05f, 0 ) ), Scale( V3( gs, 0.1f, gs ) ) ), st.floorColor, 0.25f, V3( 0, 0, 0 ), surfFlag( 1.0f + (float)Clamp( st.ground, 0, 5 ), st.floorSurf ) );
 	}
 	if( st.deck && st.deckHeight > 0.01f )
 	{
-		Box( Mul( Translate( V3( 0, st.deckHeight * 0.5f, 0 ) ), Scale( V3( st.width, st.deckHeight, st.depth ) ) ), st.floorColor * 1.1f, 0.35f );
+		Box( Mul( Translate( V3( 0, st.deckHeight * 0.5f, 0 ) ), Scale( V3( st.width, st.deckHeight, st.depth ) ) ), st.floorColor * 1.1f, 0.35f, V3( 0, 0, 0 ), surfFlag( 0, st.deckSurf ) );
 		//front skirt
 		Box( Mul( Translate( V3( 0, st.deckHeight * 0.5f, st.depth * 0.5f + 0.01f ) ), Scale( V3( st.width, st.deckHeight, 0.02f ) ) ), V3( 0.015f, 0.015f, 0.016f ), 0.05f );
 	}
@@ -1213,17 +1362,18 @@ void Renderer::BuildScene( Show& show, const std::vector< int >& sel, float time
 		const V3 top   = d.ownColor ? d.color : st.floorColor * 1.35f;
 		const V3 skirt( 0.015f, 0.015f, 0.016f );
 		const bool round = d.shape == 1;
-		auto solid       = [ & ]( const M4& m, const V3& c, float spec, const V3& emi = V3( 0, 0, 0 ) ) {
-			if( round ) Cyl( m, c, spec, emi );
-			else Box( m, c, spec, emi );
+		const float sflag = surfFlag( 0, d.surf );
+		auto solid       = [ & ]( const M4& m, const V3& c, float spec, const V3& emi = V3( 0, 0, 0 ), float flag = 0 ) {
+			if( round ) Cyl( m, c, spec, emi, flag );
+			else Box( m, c, spec, emi, flag );
 		};
 		if( d.skirt && h > 0.06f )
 		{
-			solid( local( V3( 0, h * 0.5f, 0 ), V3( w, h, dp ) ), top, 0.35f );
+			solid( local( V3( 0, h * 0.5f, 0 ), V3( w, h, dp ) ), top, 0.35f, V3( 0, 0, 0 ), sflag );
 			solid( local( V3( 0, ( h - 0.025f ) * 0.5f, 0 ), V3( w + 0.02f, h - 0.025f, dp + 0.02f ) ), skirt, 0.05f );
 		}
 		else
-			solid( local( V3( 0, h * 0.5f, 0 ), V3( w, h, dp ) ), top, 0.35f );
+			solid( local( V3( 0, h * 0.5f, 0 ), V3( w, h, dp ) ), top, 0.35f, V3( 0, 0, 0 ), sflag );
 		if( d.edgeLevel > 0.001f && ( d.edge.x + d.edge.y + d.edge.z ) > 0.001f )
 		{
 			const V3 emi = d.edge * d.edgeLevel;
@@ -1656,8 +1806,11 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 	w         = std::max( 16, w );
 	h         = std::max( 16, h );
 	UploadGobos();
+	const bool high = quality.high;
+	EnsureShadowRes( high ? std::max( shadowRes, 1024 ) : shadowRes );
 	scene_.Create( w, h, GL_RGBA16F, true, true );
-	beam_.Create( std::max( 8, w / 2 ), std::max( 8, h / 2 ), GL_RGBA16F, false, false );
+	//haze cones: half resolution, "high" three quarters (sharper edges and gobos)
+	beam_.Create( std::max( 8, high ? w * 3 / 4 : w / 2 ), std::max( 8, high ? h * 3 / 4 : h / 2 ), GL_RGBA16F, false, false );
 	comb_.Create( w, h, GL_RGBA16F, false, false );
 	out_.Create( w, h, GL_RGBA8, false, false );
 	if( bloom_.empty() || bloom_[ 0 ].w != std::max( 8, w / 2 ) || bloom_[ 0 ].h != std::max( 8, h / 2 ) )
@@ -1758,7 +1911,7 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 	{
 		glUseProgram( progShadow_ );
 		glBindFramebuffer( GL_FRAMEBUFFER, shadowFbo_ );
-		glViewport( 0, 0, shadowRes, shadowRes );
+		glViewport( 0, 0, shadowCur_, shadowCur_ );
 		glDisable( GL_CULL_FACE );
 		glEnable( GL_POLYGON_OFFSET_FILL );
 		glPolygonOffset( 1.5f, 2.0f );
@@ -1849,7 +2002,7 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 	glUniform3f( glGetUniformLocation( progScene_, "uCamPos" ), eye.x, eye.y, eye.z );
 	glUniform3f( glGetUniformLocation( progScene_, "uAmbient" ), ambient_.x, ambient_.y, ambient_.z );
 	glUniform1f( glGetUniformLocation( progScene_, "uEnv" ), show.stage.envLight );
-	glUniform1f( glGetUniformLocation( progScene_, "uShadowTexel" ), 1.0f / shadowRes );
+	glUniform1f( glGetUniformLocation( progScene_, "uShadowTexel" ), 1.0f / shadowCur_ );
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D_ARRAY, goboTex_ );
 	glUniform1i( glGetUniformLocation( progScene_, "uGobo" ), 0 );
@@ -1861,6 +2014,7 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 	glUniform1f( glGetUniformLocation( progScene_, "uCutoff" ), 0.0f );
 	glUniform1f( glGetUniformLocation( progScene_, "uWork" ), workLight ? 0.32f : 0.0f );
 	glUniform1i( glGetUniformLocation( progScene_, "uIgnoreVCol" ), 0 );
+	glUniform1i( glGetUniformLocation( progScene_, "uHigh" ), high ? 1 : 0 );
 	bindProjTex( progScene_ );
 	glDisable( GL_CULL_FACE );
 	DrawInstances( progScene_, false );
@@ -1919,8 +2073,8 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 		glUniform1f( glGetUniformLocation( progBeam_, "uHaze" ), g.haze * 0.09f * show.stage.beamLevel );
 		glUniform1f( glGetUniformLocation( progBeam_, "uNoise" ), show.stage.hazeNoise );
 		glUniform1f( glGetUniformLocation( progBeam_, "uTime" ), (float)g.time );
-		glUniform1i( glGetUniformLocation( progBeam_, "uSteps" ), (int)( 28 * Clamp( quality.beamQuality > 0 ? std::min( quality.beamQuality, show.stage.beamQuality ) : show.stage.beamQuality, 0.25f, 3.0f ) ) );
-		glUniform1f( glGetUniformLocation( progBeam_, "uShadowTexel" ), 1.0f / shadowRes );
+		glUniform1i( glGetUniformLocation( progBeam_, "uSteps" ), (int)( ( high ? 42 : 28 ) * Clamp( quality.beamQuality > 0 ? std::min( quality.beamQuality, show.stage.beamQuality ) : show.stage.beamQuality, 0.25f, 3.0f ) ) );
+		glUniform1f( glGetUniformLocation( progBeam_, "uShadowTexel" ), 1.0f / shadowCur_ );
 		glActiveTexture( GL_TEXTURE0 );
 		glBindTexture( GL_TEXTURE_2D_ARRAY, goboTex_ );
 		glUniform1i( glGetUniformLocation( progBeam_, "uGobo" ), 0 );
@@ -1975,7 +2129,7 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 		glUniform1f( glGetUniformLocation( progProjBeam_, "uNoise" ), show.stage.hazeNoise );
 		glUniform1f( glGetUniformLocation( progProjBeam_, "uTime" ), (float)g.time );
 		glUniform1i( glGetUniformLocation( progProjBeam_, "uSteps" ), (int)( 28 * Clamp( quality.beamQuality > 0 ? std::min( quality.beamQuality, show.stage.beamQuality ) : show.stage.beamQuality, 0.25f, 3.0f ) ) );
-		glUniform1f( glGetUniformLocation( progProjBeam_, "uShadowTexel" ), 1.0f / shadowRes );
+		glUniform1f( glGetUniformLocation( progProjBeam_, "uShadowTexel" ), 1.0f / shadowCur_ );
 		glActiveTexture( GL_TEXTURE1 );
 		glBindTexture( GL_TEXTURE_2D_ARRAY, shadowTex_ );
 		glUniform1i( glGetUniformLocation( progProjBeam_, "uShadow" ), 1 );
@@ -2012,6 +2166,9 @@ void Renderer::Render( Show& show, const SimGlobals& g, const Camera& cam, const
 	glBindTexture( GL_TEXTURE_2D, beam_.color );
 	glUniform1i( glGetUniformLocation( progComb_, "uBeam" ), 1 );
 	glUniform2f( glGetUniformLocation( progComb_, "uBeamTexel" ), 0.75f / beam_.w, 0.75f / beam_.h );
+	glUniform1i( glGetUniformLocation( progComb_, "uHigh" ), high ? 1 : 0 );
+	glUniformMatrix4fv( glGetUniformLocation( progComb_, "uVP" ), 1, GL_FALSE, viewProj.m );
+	glUniform2f( glGetUniformLocation( progComb_, "uTexel" ), 1.0f / w, 1.0f / h );
 	{
 		const StageCfg& sf = show.stage;
 		M4 invC            = Inverse( viewProj );

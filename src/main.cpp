@@ -21,6 +21,7 @@ using namespace ls;
 
 static App* g_app = nullptr;
 static bool g_running = true;
+static bool g_uiTest  = false;//scripted UI test: the real mouse / keyboard / focus changes do not reach the UI
 
 //---- hang diagnostics: heartbeat from the main loop and the window procedure (a 1 s timer keeps it
 //beating inside modal dialogs). No beat for 6 s -> memory image "haenger_<time>.dmp" next to the exe.
@@ -57,6 +58,8 @@ static void StartHangWatch()
 static LRESULT CALLBACK WndProc( HWND h, UINT m, WPARAM w, LPARAM l )
 {
 	++g_beat;
+	if( g_uiTest && ( ( m >= WM_MOUSEFIRST && m <= WM_MOUSELAST ) || ( m >= WM_KEYFIRST && m <= WM_KEYLAST ) || m == WM_MOUSELEAVE || m == WM_NCMOUSEMOVE || m == WM_NCMOUSELEAVE || m == WM_SETFOCUS || m == WM_KILLFOCUS || m == WM_INPUTLANGCHANGE ) )
+		return DefWindowProcW( h, m, w, l );
 	if( ImGui_ImplWin32_WndProcHandler( h, m, w, l ) ) return 1;
 	switch( m )
 	{
@@ -90,51 +93,84 @@ static LRESULT CALLBACK WndProc( HWND h, UINT m, WPARAM w, LPARAM l )
 
 static void Style( float scale )
 {
-	ImGuiStyle& s      = ImGui::GetStyle();
-	s.WindowRounding   = 4;
-	s.ChildRounding    = 4;
-	s.FrameRounding    = 3;
-	s.PopupRounding    = 4;
-	s.GrabRounding     = 3;
-	s.TabRounding      = 3;
-	s.ScrollbarRounding = 4;
-	s.FramePadding     = ImVec2( 7, 4 );
-	s.ItemSpacing      = ImVec2( 7, 5 );
-	s.WindowBorderSize = 0;
-	s.ChildBorderSize  = 1;
-	s.FrameBorderSize  = 0;
+	//UI refresh (11/2026): softer layered surfaces, more rounding, a little more air; accent blue 90/165/255 stays
+	ImGuiStyle& s       = ImGui::GetStyle();
+	s.WindowRounding    = 8;
+	s.ChildRounding     = 8;
+	s.FrameRounding     = 5;
+	s.PopupRounding     = 8;
+	s.GrabRounding      = 4;
+	s.TabRounding       = 6;
+	s.ScrollbarRounding = 8;
+	s.ScrollbarSize     = 11;
+	s.GrabMinSize       = 10;
+	s.FramePadding      = ImVec2( 8, 4 );
+	s.ItemSpacing       = ImVec2( 7, 5 );
+	s.ItemInnerSpacing  = ImVec2( 6, 4 );
+	s.CellPadding       = ImVec2( 5, 3 );
+	s.WindowPadding     = ImVec2( 12, 10 );
+	s.WindowBorderSize  = 1;//floating windows + popups get a fine outline (the host window switches it off)
+	s.PopupBorderSize   = 1;
+	s.ChildBorderSize   = 1;
+	s.FrameBorderSize   = 0;
+	s.TabBorderSize     = 0;
+	s.TabBarBorderSize  = 1;
+	s.TabBarOverlineSize = 2;
+	s.SeparatorTextBorderSize = 1;
+	s.SeparatorTextPadding    = ImVec2( 12, 3 );
+	s.WindowTitleAlign  = ImVec2( 0.0f, 0.5f );
+	s.WindowMenuButtonPosition = ImGuiDir_None;
+	s.DisabledAlpha     = 0.45f;
 	ImVec4* c = s.Colors;
 	auto rgb  = []( int r, int g, int b, float a = 1 ) { return ImVec4( r / 255.0f, g / 255.0f, b / 255.0f, a ); };
-	c[ ImGuiCol_Text ]                 = rgb( 222, 226, 234 );
-	c[ ImGuiCol_TextDisabled ]         = rgb( 120, 128, 142 );
-	c[ ImGuiCol_WindowBg ]             = rgb( 15, 16, 20 );
-	c[ ImGuiCol_ChildBg ]              = rgb( 19, 20, 25 );
-	c[ ImGuiCol_PopupBg ]              = rgb( 22, 24, 30, 0.98f );
-	c[ ImGuiCol_Border ]               = rgb( 34, 37, 46 );
-	c[ ImGuiCol_FrameBg ]              = rgb( 30, 33, 41 );
-	c[ ImGuiCol_FrameBgHovered ]       = rgb( 40, 45, 57 );
-	c[ ImGuiCol_FrameBgActive ]        = rgb( 46, 54, 72 );
-	c[ ImGuiCol_TitleBg ]              = rgb( 15, 16, 20 );
-	c[ ImGuiCol_TitleBgActive ]        = rgb( 22, 24, 30 );
-	c[ ImGuiCol_MenuBarBg ]            = rgb( 12, 13, 16 );
-	c[ ImGuiCol_ScrollbarBg ]          = rgb( 15, 16, 20 );
-	c[ ImGuiCol_ScrollbarGrab ]        = rgb( 44, 48, 60 );
+	c[ ImGuiCol_Text ]                 = rgb( 226, 230, 238 );
+	c[ ImGuiCol_TextDisabled ]         = rgb( 124, 132, 148 );
+	c[ ImGuiCol_WindowBg ]             = rgb( 12, 13, 17 );
+	c[ ImGuiCol_ChildBg ]              = rgb( 20, 22, 28 );
+	c[ ImGuiCol_PopupBg ]              = rgb( 24, 26, 34, 0.985f );
+	c[ ImGuiCol_Border ]               = rgb( 255, 255, 255, 0.075f );
+	c[ ImGuiCol_BorderShadow ]         = rgb( 0, 0, 0, 0 );
+	c[ ImGuiCol_FrameBg ]              = rgb( 33, 36, 46 );
+	c[ ImGuiCol_FrameBgHovered ]       = rgb( 42, 47, 61 );
+	c[ ImGuiCol_FrameBgActive ]        = rgb( 46, 56, 78 );
+	c[ ImGuiCol_TitleBg ]              = rgb( 18, 20, 26 );
+	c[ ImGuiCol_TitleBgActive ]        = rgb( 26, 30, 40 );
+	c[ ImGuiCol_TitleBgCollapsed ]     = rgb( 18, 20, 26 );
+	c[ ImGuiCol_MenuBarBg ]            = rgb( 12, 13, 17 );
+	c[ ImGuiCol_ScrollbarBg ]          = rgb( 0, 0, 0, 0 );
+	c[ ImGuiCol_ScrollbarGrab ]        = rgb( 255, 255, 255, 0.13f );
+	c[ ImGuiCol_ScrollbarGrabHovered ] = rgb( 255, 255, 255, 0.22f );
+	c[ ImGuiCol_ScrollbarGrabActive ]  = rgb( 90, 165, 255, 0.75f );
 	c[ ImGuiCol_CheckMark ]            = rgb( 90, 165, 255 );
-	c[ ImGuiCol_SliderGrab ]           = rgb( 70, 140, 235 );
-	c[ ImGuiCol_SliderGrabActive ]     = rgb( 110, 175, 255 );
-	c[ ImGuiCol_Button ]               = rgb( 36, 40, 51 );
-	c[ ImGuiCol_ButtonHovered ]        = rgb( 50, 60, 80 );
-	c[ ImGuiCol_ButtonActive ]         = rgb( 60, 100, 170 );
-	c[ ImGuiCol_Header ]               = rgb( 40, 70, 120, 0.7f );
-	c[ ImGuiCol_HeaderHovered ]        = rgb( 50, 85, 145, 0.8f );
-	c[ ImGuiCol_HeaderActive ]         = rgb( 60, 100, 170 );
-	c[ ImGuiCol_Tab ]                  = rgb( 24, 26, 33 );
-	c[ ImGuiCol_TabHovered ]           = rgb( 50, 70, 110 );
-	c[ ImGuiCol_TabSelected ]          = rgb( 38, 56, 92 );
-	c[ ImGuiCol_TableHeaderBg ]        = rgb( 26, 28, 35 );
-	c[ ImGuiCol_TableRowBgAlt ]        = rgb( 255, 255, 255, 0.025f );
-	c[ ImGuiCol_Separator ]            = rgb( 38, 42, 52 );
-	c[ ImGuiCol_ModalWindowDimBg ]     = rgb( 0, 0, 0, 0.55f );
+	c[ ImGuiCol_SliderGrab ]           = rgb( 78, 150, 245 );
+	c[ ImGuiCol_SliderGrabActive ]     = rgb( 120, 185, 255 );
+	c[ ImGuiCol_Button ]               = rgb( 38, 42, 54 );
+	c[ ImGuiCol_ButtonHovered ]        = rgb( 52, 60, 80 );
+	c[ ImGuiCol_ButtonActive ]         = rgb( 58, 98, 168 );
+	c[ ImGuiCol_Header ]               = rgb( 60, 110, 190, 0.38f );
+	c[ ImGuiCol_HeaderHovered ]        = rgb( 80, 130, 210, 0.30f );
+	c[ ImGuiCol_HeaderActive ]         = rgb( 70, 125, 215, 0.60f );
+	c[ ImGuiCol_Tab ]                  = rgb( 0, 0, 0, 0 );
+	c[ ImGuiCol_TabHovered ]           = rgb( 255, 255, 255, 0.07f );
+	c[ ImGuiCol_TabSelected ]          = rgb( 90, 165, 255, 0.16f );
+	c[ ImGuiCol_TabSelectedOverline ]  = rgb( 90, 165, 255 );
+	c[ ImGuiCol_TabDimmed ]            = rgb( 0, 0, 0, 0 );
+	c[ ImGuiCol_TabDimmedSelected ]    = rgb( 90, 165, 255, 0.10f );
+	c[ ImGuiCol_TabDimmedSelectedOverline ] = rgb( 90, 165, 255, 0.5f );
+	c[ ImGuiCol_TableHeaderBg ]        = rgb( 27, 30, 38 );
+	c[ ImGuiCol_TableBorderStrong ]    = rgb( 255, 255, 255, 0.09f );
+	c[ ImGuiCol_TableBorderLight ]     = rgb( 255, 255, 255, 0.05f );
+	c[ ImGuiCol_TableRowBgAlt ]        = rgb( 255, 255, 255, 0.022f );
+	c[ ImGuiCol_Separator ]            = rgb( 255, 255, 255, 0.08f );
+	c[ ImGuiCol_SeparatorHovered ]     = rgb( 90, 165, 255, 0.6f );
+	c[ ImGuiCol_SeparatorActive ]      = rgb( 90, 165, 255 );
+	c[ ImGuiCol_ResizeGrip ]           = rgb( 255, 255, 255, 0.08f );
+	c[ ImGuiCol_ResizeGripHovered ]    = rgb( 90, 165, 255, 0.6f );
+	c[ ImGuiCol_ResizeGripActive ]     = rgb( 90, 165, 255 );
+	c[ ImGuiCol_TextSelectedBg ]       = rgb( 90, 165, 255, 0.35f );
+	c[ ImGuiCol_DragDropTarget ]       = rgb( 255, 170, 60 );
+	c[ ImGuiCol_NavCursor ]            = rgb( 90, 165, 255, 0.8f );
+	c[ ImGuiCol_ModalWindowDimBg ]     = rgb( 0, 0, 0, 0.6f );
 	s.ScaleAllSizes( scale );
 }
 
@@ -144,11 +180,15 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	int argc        = 0;
 	LPWSTR* argvw   = CommandLineToArgvW( GetCommandLineW(), &argc );
 	bool selftest   = false;
-	std::string shotUi, openPath, startTab, lang, screenMask, resOut, fxTypes, lbxOut, lbiIn, lbiMode;
+	std::string uiTest;//scripted UI test: log file (uitest.cpp)
+	std::string shotUi, openPath, startTab, lang, screenMask, resOut, fxTypes, lbxOut, lbiIn, lbiMode, lbxUi;
 	bool tlDemo = false, tlWindow = false;
 	float bottomH = 0;
 	bool demoDecks = false, camFoh = false, fxDrawn = false;
 	std::string showcaseDir;
+	std::string vidOut;//--video: offline video export of the loaded show, then quit (promo clips, tests)
+	float vidSecs = 8, vidFrom = 0;
+	int vidCam = 2;
 	int startScreen = -1;
 	bool demo = false, selectAll = false, oscWin = false, swapDlg = false, ablWin = false, resWin = false, lbxWin = false;
 	int frames = 0, shotW = 1720, shotH = 1000;
@@ -158,6 +198,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		std::string a = Narrow( argvw[ i ] );
 		if( a == "--selftest" ) selftest = true;
 		else if( a == "--shotui" && i + 1 < argc ) shotUi = Narrow( argvw[ ++i ] );
+		else if( a == "--uitest" && i + 1 < argc ) uiTest = Narrow( argvw[ ++i ] );
 		else if( a == "--frames" && i + 1 < argc ) frames = _wtoi( argvw[ ++i ] );
 		else if( a == "--size" && i + 2 < argc ) { shotW = _wtoi( argvw[ i + 1 ] ); shotH = _wtoi( argvw[ i + 2 ] ); i += 2; }
 		else if( a == "--scale" && i + 1 < argc ) shotScale = (float)_wtof( argvw[ ++i ] );
@@ -174,12 +215,17 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		else if( a == "--selectall" ) selectAll = true;
 		else if( a == "--oscwindow" ) oscWin = true;
 		else if( a == "--reswindow" ) resWin = true;
-		else if( a == "--lightshowwindow" ) lbxWin = true;//screenshots: Lightshow export window
+		else if( a == "--lightshowwindow" ) lbxWin = true;
+		else if( a == "--lightshowui" && i + 1 < argc ) lbxUi = Narrow( argvw[ ++i ] );//test: export like the button (UI frame, engine running), then quit//screenshots: Lightshow export window
 		else if( a == "--importlightshow" && i + 1 < argc ) lbiIn = Narrow( argvw[ ++i ] );//opens the Lightshow import window with this file
 		else if( a == "--importmode" && i + 1 < argc ) lbiMode = Narrow( argvw[ ++i ] );//screenshots / tests: import at once (lanes, track, lanes-current, track-current)
 		else if( a == "--resolume" && i + 1 < argc ) resOut = Narrow( argvw[ ++i ] );//write the Advanced Output preset of the show and quit
 		else if( a == "--ablwindow" ) ablWin = true;
 		else if( a == "--lightshow" && i + 1 < argc ) lbxOut = Narrow( argvw[ ++i ] );//export the show timeline as a Lightshow (.lightshow) and quit
+		else if( a == "--video" && i + 1 < argc ) vidOut = Narrow( argvw[ ++i ] );
+		else if( a == "--videosecs" && i + 1 < argc ) vidSecs = (float)_wtof( argvw[ ++i ] );
+		else if( a == "--videofrom" && i + 1 < argc ) vidFrom = (float)_wtof( argvw[ ++i ] );
+		else if( a == "--videocam" && i + 1 < argc ) vidCam = _wtoi( argvw[ ++i ] );
 		else if( a == "--swap" ) swapDlg = true;
 		else if( a == "--lang" && i + 1 < argc ) lang = Narrow( argvw[ ++i ] );
 		else if( a == "--screen" && i + 1 < argc ) startScreen = _wtoi( argvw[ ++i ] );
@@ -187,6 +233,8 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		else if( a.size() && a[ 0 ] != '-' ) openPath = a;
 	}
 	LocalFree( argvw );
+	const bool scripted = !shotUi.empty() || !uiTest.empty();//fixed window size and frame time, no vsync, no autosave
+	g_uiTest            = !uiTest.empty();
 	//UI language before anything builds names: settings.json "language", --lang overrides, the self test runs in German
 	{
 		std::string txt;
@@ -209,7 +257,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	RegisterClassExW( &wc );
 	int sw = GetSystemMetrics( SM_CXSCREEN ), sh = GetSystemMetrics( SM_CYSCREEN );
 	int ww = std::min( 1720, sw - 80 ), wh = std::min( 1020, sh - 80 );
-	if( !shotUi.empty() ) { ww = shotW; wh = shotH; }
+	if( scripted ) { ww = shotW; wh = shotH; }
 	HWND hwnd = CreateWindowExW( 0, wc.lpszClassName, L"Grosserd LightStage", WS_OVERLAPPEDWINDOW, ( sw - ww ) / 2, ( sh - wh ) / 2, ww, wh, nullptr, nullptr, inst, nullptr );
 	DragAcceptFiles( hwnd, TRUE );
 	HDC dc = GetDC( hwnd );
@@ -249,7 +297,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		MessageBoxA( hwnd, L( "OpenGL 4.3 wird benoetigt (Grafiktreiber aktualisieren)." ), "LightStage", MB_ICONERROR );
 		return 1;
 	}
-	if( WGLEW_EXT_swap_control ) wglSwapIntervalEXT( shotUi.empty() ? 1 : 0 );
+	if( WGLEW_EXT_swap_control ) wglSwapIntervalEXT( scripted ? 0 : 1 );
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
@@ -287,6 +335,8 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	}
 	if( selftest )
 	{
+		app.quality_ = app.qualityEff_ = 1;//normal = the 2.0 look, no throttling (image checks)
+		app.qualityAuto_ = false;
 		int r = RunSelfTest( app, ExeDir() );
 		app.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
@@ -351,7 +401,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		return ok ? 0 : 1;
 	}
 	app.startTab   = startTab;
-	app.noAutosave = !shotUi.empty() || !showcaseDir.empty() || !resOut.empty() || !lbxOut.empty();
+	app.noAutosave = scripted || !showcaseDir.empty() || !resOut.empty() || !lbxOut.empty() || !vidOut.empty();
 	if( demoDecks )
 	{
 		Deck d;
@@ -390,6 +440,25 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	if( tlWindow ) app.ShowTimelineWindow();
 	if( bottomH > 0 ) app.SetBottomHeight( bottomH );
 	if( camFoh ) { app.cam.yaw = 30; app.cam.pitch = 24; app.cam.dist = 30; app.cam.target = V3( 0, 1.5f, 5 ); }
+	if( !vidOut.empty() )
+	{
+		app.exp_.res      = 1;//1920x1080
+		app.exp_.fpsIdx   = 1;//30 fps
+		app.exp_.seconds  = vidSecs;
+		app.exp_.camMode  = vidCam;
+		app.exp_.timeline = true;
+		app.exp_.tlStart  = vidFrom;
+		bool ok = app.ExportStart( vidOut );
+		while( ok && app.ExportStep( 1.0 ) ) {}
+		ok = ok && app.exp_.err.empty();
+		app.ExportFinish( ok );
+		Log( "video export %s: %s %s", vidOut.c_str(), ok ? "ok" : "failed", app.exp_.err.c_str() );
+		app.Shutdown();
+		ImGui_ImplOpenGL3_Shutdown();
+		ImGui_ImplWin32_Shutdown();
+		ImGui::DestroyContext();
+		return ok ? 0 : 1;
+	}
 	if( !fxTypes.empty() )
 	{
 		size_t p = 0;
@@ -442,21 +511,24 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	if( oscWin ) app.ShowOscWindow();
 	if( resWin ) app.ShowResolumeWindow();
 	if( lbxWin ) app.ShowLbxWindow();
+	if( !lbxUi.empty() ) { app.lbxUiTest = lbxUi; app.noAutosave = true; }
 	if( !lbiIn.empty() && !lbiDone ) app.LbiOpen( lbiIn );
 	if( ablWin ) app.ShowAbletonWindow();
 	if( swapDlg ) app.OpenSwapDialog( app.sel );
 	ShowWindow( hwnd, SW_SHOWDEFAULT );
 	UpdateWindow( hwnd );
 	SetTimer( hwnd, 77, 1000, nullptr );//heartbeat inside modal loops
-	if( shotUi.empty() ) StartHangWatch();
+	if( !scripted ) StartHangWatch();
 
 	//normal start: user settings (performance mode) and the input engine thread
 	Log( "start: Einstellungen" );
-	app.LoadSettings();
+	if( uiTest.empty() ) app.LoadSettings();//the UI test never reads or writes the user's settings
+	else app.UiTestStart( uiTest );
 	Log( "start: Engine" );
 	app.StartEngine();
 	Log( "start: Hauptschleife" );
-	int swapInterval = shotUi.empty() ? 1 : 0;
+	int swapInterval = scripted ? 0 : 1;
+	int uiTestRc     = 0;
 	double last = Now();
 	int frame   = 0;
 	std::string lastTitle;
@@ -482,10 +554,13 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		last       = now;
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplWin32_NewFrame();
+		if( g_uiTest ) app.UiTestInput();//after the backend: the script's mouse wins over the real one
 		ImGui::NewFrame();
 		ImGui::PushFont( app.fontUi );
-		app.Frame( shotUi.empty() ? dt : 1.0f / 60.0f );
+		app.Frame( scripted ? 1.0f / 60.0f : dt );
 		ImGui::PopFont();
+		if( g_uiTest && app.UiTestDone() ) { Log( "ui test: end, %d FAIL", app.UiTestFails() ); uiTestRc = app.UiTestFails() ? 1 : 0; break; }
+		if( app.lbxUiState >= 2 ) { Log( "lightshow ui test: end (state %d)", app.lbxUiState ); break; }
 		ImGui::Render();
 		RECT r;
 		GetClientRect( hwnd, &r );
@@ -510,8 +585,8 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		SwapBuffers( dc );
 		//performance mode: no vsync, the UI runs at 30 fps while used and 10 fps when idle (wakes up on input)
 		{
-			const double iv = shotUi.empty() ? app.FrameInterval() : 0.0;
-			const int want  = shotUi.empty() ? ( iv > 0 ? 0 : 1 ) : 0;
+			const double iv = scripted ? 0.0 : app.FrameInterval();
+			const int want  = scripted ? 0 : ( iv > 0 ? 0 : 1 );
 			if( want != swapInterval && WGLEW_EXT_swap_control )
 			{
 				wglSwapIntervalEXT( want );
@@ -549,5 +624,5 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	wglDeleteContext( rc );
 	ReleaseDC( hwnd, dc );
 	DestroyWindow( hwnd );
-	return 0;
+	return uiTestRc;
 }

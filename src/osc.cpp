@@ -310,9 +310,26 @@ bool ApplyOsc( Show& show, const OscMsg& m )
 		if( Key( p[ 3 ] ) == "color" || Key( p[ 3 ] ) == "rgb" )
 		{
 			if( m.f.size() < 3 ) return false;
-			show.SetAttr( *f, Attr::Red, Arg01( m, 0 ), head );
-			show.SetAttr( *f, Attr::Green, Arg01( m, 1 ), head );
-			show.SetAttr( *f, Attr::Blue, Arg01( m, 2 ), head );
+			if( show.colorMix == 0 && show.HasAttr( *f, Attr::Red ) )
+			{
+				show.SetAttr( *f, Attr::Red, Arg01( m, 0 ), head );
+				show.SetAttr( *f, Attr::Green, Arg01( m, 1 ), head );
+				show.SetAttr( *f, Attr::Blue, Arg01( m, 2 ), head );
+			}
+			else
+				show.SetColor( *f, V3( Arg01( m, 0 ), Arg01( m, 1 ), Arg01( m, 2 ) ), head );
+			return true;
+		}
+		if( Key( p[ 3 ] ) == "pandeg" || Key( p[ 3 ] ) == "tiltdeg" )
+		{
+			if( m.f.empty() ) return false;
+			show.SetAttrDeg( *f, Key( p[ 3 ] ) == "pandeg" ? Attr::Pan : Attr::Tilt, m.f[ 0 ], head );
+			return true;
+		}
+		if( Key( p[ 3 ] ) == "kelvin" )
+		{
+			if( m.f.empty() ) return false;
+			show.SetKelvin( *f, m.f[ 0 ] > 1.0f ? m.f[ 0 ] : 2000.0f + Arg01( m, 0 ) * 8000.0f, head );
 			return true;
 		}
 		Attr a = AttrByName( p[ 3 ] );

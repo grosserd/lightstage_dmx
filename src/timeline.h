@@ -3,6 +3,7 @@
 // The timeline is a layer on top of the snapshots (below the effects): it writes into Show::snapOut.
 #pragma once
 #include "fixture.h"
+#include <map>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,7 @@ struct TlTrack
 	bool mute = false, solo = false, open = true;
 	float level = 1.0f;//share of this track against what is underneath
 	V3 color{ 0.3f, 0.75f, 0.85f };
+	std::vector< double > cuts; //sections: manual cuts between the blocks of a collapsed track (keys >= cut belong to the next block)
 	std::vector< TlClip > clips;//clip track
 	//audio track: file (played with the timeline), gain, start of the file on the timeline
 	//Lightshow track: file (.lightshow) + start on the timeline (offset)
@@ -163,6 +165,39 @@ bool TlLaneTouched( Show& s, const TlTrack& t, const TlLane& l );
 void TlLaneRelease( Show& s, const TlTrack& t, const TlLane& l );//gives the lane's channels back to the timeline
 //Ramer-Douglas-Peucker on (time, value): indices of the points to keep
 void TlThin( const std::vector< std::pair< double, V3 > >& pts, float eps, bool color, std::vector< int >& keep );
+//---- sections ("Abschnitte"): a collapsed group / DMX track shows its keys as blocks. A block = the keys of all lanes
+//between two gaps (longer than TlBlockGap) or manual cuts. Blocks are a second view of the same keys - nothing else is stored
+//but the cuts.
+struct TlBlock
+{
+	double t0 = 0, t1 = 0;//first / last key
+	int keys  = 0;
+};
+double TlBlockGap( const Timeline& tl );//a pause longer than this separates two blocks (2 bars, at least 1 s)
+void TlBlocks( const Timeline& tl, const TlTrack& t, std::vector< TlBlock >& out );
+//moves (or copies) the blocks [t0, t1] of a track by dt; what is at the target is overwritten (all lanes). The moved keys are selected
+void TlMoveBlocks( Timeline& tl, TlTrack& t, const std::vector< std::pair< double, double > >& blocks, double dt, bool copy );
+//trims (or extends) one edge of the block [t0, t1] to x: keys outside go, every lane gets a key at x with the curve's value there
+void TlTrimBlock( Timeline& tl, TlTrack& t, double t0, double t1, bool leftEdge, double x );
+//cuts the block that contains 'at' in two (lanes running through get a key on both sides, so each half keeps its curve)
+bool TlSplitBlock( Timeline& tl, TlTrack& t, double at );
+//removes the manual cuts after the block ending at t1; false = nothing to join (the pause is longer than TlBlockGap)
+bool TlJoinBlocks( Timeline& tl, TlTrack& t, double t1 );
+//---- range over all tracks (keys, clip blocks, markers, timecode cues, Lightshow tracks; the audio track stays)
+struct TlRangeClip
+{
+	double len = 0;
+	std::map< std::pair< uint32_t, int >, std::vector< TlKey > > keys;//(track uid, lane) -> keys, times relative to the range start
+	std::vector< std::pair< uint32_t, TlClip > > clips;
+	std::vector< TlMarker > markers;
+	std::vector< std::pair< int, double > > cues;//cue index, relative time (only used when a range is moved)
+	bool Empty() const { return len <= 0; }
+};
+void TlRangeCopy( const Show& s, double a, double b, TlRangeClip& out );
+void TlInsertTime( Show& s, double at, double len );  //everything from 'at' on moves later
+void TlDeleteTime( Show& s, double a, double b );     //[a, b) is removed, everything behind moves up (timecode cues inside become GO cues)
+void TlRangePaste( Show& s, const TlRangeClip& c, double at );//inserts the time, then the content
+double TlRangeMove( Show& s, double a, double b, double to ); //cut + insert at 'to'; returns the new start
 //pan / tilt of a lane value in degrees (first lamp of the track with that attribute); false = no range
 bool TlDegrees( Show& s, const TlTrack& t, Attr a, float v, float& deg );
 }//namespace ls
