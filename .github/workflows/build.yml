@@ -1,0 +1,64 @@
+name: build
+
+# Builds LightStage with CMake on macOS (Apple Silicon) and Windows.
+# Development branch only - official downloads stay on https://grosserd5.gumroad.com/l/lightstage
+on:
+  push:
+    branches: [ macos ]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Build
+        shell: bash
+        run: |
+          set +e
+          cmake --build build -j 3 -- -k 2>&1 | tee build.log
+          rc=${PIPESTATUS[0]}
+          echo "---- errors ----"
+          grep -E "error:" build.log | sort -u | head -n 200
+          exit $rc
+
+      - name: Self test
+        if: success()
+        continue-on-error: true
+        shell: bash
+        run: |
+          cd build/LightStage
+          ./LightStage --selftest; echo "exit $?"
+          tail -n 60 selftest.log || true
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightStage-macos-arm64
+          path: |
+            build.log
+            build/LightStage/
+          if-no-files-found: warn
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release -- /m /v:minimal
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightStage-windows-x64
+          path: build/LightStage/

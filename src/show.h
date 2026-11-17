@@ -544,6 +544,10 @@ struct Show
 	std::vector< GroupFader > groups;
 	std::vector< AbletonMap > ableton;
 	std::string showId;//stable id of this show (devices notice a different show)
+	//optional start view stored in the show file ("view"; the example shows set it): the camera takes it when the show is opened
+	bool hasView = false;
+	V3 viewTarget{ 0, 2.5f, 0 };
+	float viewYaw = 0, viewPitch = 12, viewDist = 17;
 	AbletonMap* FindAbleton( const std::string& id )//table bound to this device instance
 	{
 		if( id.empty() ) return nullptr;

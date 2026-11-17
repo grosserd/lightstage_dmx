@@ -720,6 +720,7 @@ int Show::MountedCount( MountType t, int idx ) const
 void Show::Clear()
 {
 	std::lock_guard< std::mutex > l( dmxLock );
+	hasView = false;
 	universes.clear();
 	dmx.clear();
 	fixtures.clear();
@@ -2303,6 +2304,15 @@ Json Show::ToJson( bool undo )
 		st.Set( "decks", ds );
 	}
 	j.Set( "stage", st );
+	if( hasView )
+	{
+		Json vw = Json::Obj();
+		vw.Set( "target", V( viewTarget ) );
+		vw.Set( "yaw", viewYaw );
+		vw.Set( "pitch", viewPitch );
+		vw.Set( "dist", viewDist );
+		j.Set( "view", vw );
+	}
 	Json mi = Json::Arr();
 	for( auto& m : midi ) mi.Push( MidiMapToJson( m ) );
 	j.Set( "midi", mi );
@@ -2649,6 +2659,17 @@ bool Show::FromJson( const Json& j, const Library& lib, const std::string& file,
 			s.maskFile = o[ "maskFile" ].Str( "" );
 		}
 		screens.push_back( s );
+	}
+	{
+		const Json& vw = j[ "view" ];
+		hasView        = vw.IsObj();
+		if( hasView )
+		{
+			viewTarget = V( vw[ "target" ], V3( 0, 2.5f, 0 ) );
+			viewYaw    = vw[ "yaw" ].F( 0 );
+			viewPitch  = Clamp( vw[ "pitch" ].F( 12 ), -89.0f, 89.0f );
+			viewDist   = Clamp( vw[ "dist" ].F( 17 ), 1.0f, 150.0f );
+		}
 	}
 	const Json& st    = j[ "stage" ];
 	stage.width       = st[ "width" ].F( stage.width );

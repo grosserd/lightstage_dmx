@@ -982,6 +982,162 @@ bool App::BuildShowcase( int n, std::string& title )
 		k.Only( { idSeq, idPx, idCol, idZb } );
 		break;
 	}
+	//------------------------------------------------------------ 7: festival main stage with a pyramid roof, daylight
+	//after a photo of a big open-air pyramid stage: chevron rows of warm blinders and cool white LED lights under the
+	//roof, starfield backdrop (twinkling uplights), a few movers for the evening looks
+	case 5:
+	{
+		title = "07 Festival Pyramid Stage - Blinders in Daylight";
+		ApplyMood( st, 2 );
+		st.width       = 26;
+		st.depth       = 12;
+		st.deckHeight  = 2.0f;
+		st.backWall    = true;
+		st.wallHeight  = 9.5f;
+		st.wallColor   = V3( 0.10f, 0.07f, 0.16f );
+		st.floorColor  = V3( 0.05f, 0.05f, 0.055f );
+		st.haze        = 0.02f;
+		st.beamLevel   = 0.3f;//daylight: beams stay faint
+		st.bloom       = 0.3f;
+		st.hazeNoise   = 0.6f;
+		st.distanceFog = 0;
+		st.skyZenith   = V3( 0.045f, 0.05f, 0.065f );//overcast, late afternoon
+		st.skyHorizon  = V3( 0.095f, 0.10f, 0.115f );
+		st.stars       = 0;
+		st.moon        = 0;
+		st.ambient     = 0.06f;
+		st.ambientColor = V3( 0.9f, 0.93f, 1.0f );
+		k.AddDeck( "Drum riser", 0, 0, -2.5f, 4.5f, 3.2f, 0.6f, true, 1, V3( 0.6f, 0.3f, 1.0f ), 1.5f );
+		k.AddDeck( "Keys riser", 0, -6.5f, -2.8f, 3.0f, 2.4f, 0.4f, true, 3 );
+		k.AddDeck( "Percussion riser", 0, 6.5f, -2.8f, 3.0f, 2.4f, 0.4f, true, 3 );
+		k.AddDeck( "PA wing L", 0, -17.5f, 1.0f, 5, 6, 2.0f, false, 0 );
+		k.AddDeck( "PA wing R", 0, 17.5f, 1.0f, 5, 6, 2.0f, false, 0 );
+		//pyramid roof: three A-frames, ridge and eaves
+		const float apex = 19.0f, eaveX = 17.5f, eaveY = 3.0f;
+		for( float z : { 6.5f, 0.0f, -6.5f } )
+		{
+			k.Truss( V3( -eaveX, eaveY, z ), V3( 0, apex, z ), true );
+			k.Truss( V3( 0, apex, z ), V3( eaveX, eaveY, z ), true );
+		}
+		k.Truss( V3( 0, apex, -6.5f ), V3( 0, apex, 6.5f ), true );
+		for( float x : { -eaveX, eaveX } ) k.Truss( V3( x, eaveY, -6.5f ), V3( x, eaveY, 6.5f ), true );
+		for( float x : { -8.75f, 8.75f } ) k.Truss( V3( x, ( apex + eaveY ) * 0.5f, -6.5f ), V3( x, ( apex + eaveY ) * 0.5f, 6.5f ), true );
+		//chevron lighting trusses under the roof (front = highest and widest)
+		struct Chev { float hw, yLow, yTop, z; int n; };
+		const Chev chev[ 3 ] = { { 12.5f, 6.2f, 16.4f, 4.6f, 8 }, { 10.5f, 5.9f, 14.2f, 0.8f, 7 }, { 8.5f, 5.6f, 12.0f, -3.0f, 6 } };
+		std::vector< FixtureInst* > blinders, cool, beams, washes, wall, sideCool;
+		std::vector< int > rowIds[ 3 ];
+		for( int c = 0; c < 3; ++c )
+		{
+			const Chev& h = chev[ c ];
+			k.Truss( V3( -h.hw, h.yLow, h.z ), V3( 0, h.yTop, h.z ), true );
+			k.Truss( V3( 0, h.yTop, h.z ), V3( h.hw, h.yLow, h.z ), true );
+			for( int side = 0; side < 2; ++side )
+				for( int i = 0; i < h.n; ++i )
+				{
+					const float t = ( i + 0.5f ) / h.n;
+					const V3 pos( ( side ? 1.0f : -1.0f ) * h.hw * t, h.yTop + ( h.yLow - h.yTop ) * t - 0.32f, h.z );
+					const bool warm = ( i + c ) % 2 == 0;
+					const std::string nm = std::string( warm ? "Blinder " : "Cool " ) + char( 'A' + c ) + ( side ? "R" : "L" ) + std::to_string( i + 1 );
+					FixtureInst* f = k.Add( warm ? "blinder-4" : "led-strobe", pos, V3( warm ? 112.0f : 118.0f, 0, 0 ), nm );
+					( warm ? blinders : cool ).push_back( f );
+					if( f ) rowIds[ c ].push_back( f->id );
+				}
+		}
+		//cool white lights down the front roof legs
+		for( int side = 0; side < 2; ++side )
+			for( int i = 0; i < 6; ++i )
+			{
+				const float t = 0.42f + i * 0.095f;//from the apex outwards
+				const V3 pos( ( side ? 1.0f : -1.0f ) * eaveX * t, apex + ( eaveY - apex ) * t - 0.34f, 6.5f );
+				sideCool.push_back( k.Add( i % 2 ? "blinder-2" : "led-strobe", pos, V3( 115, 0, 0 ), std::string( i % 2 ? "Leg blinder " : "Leg cool " ) + ( side ? "R" : "L" ) + std::to_string( i / 2 + 1 ) ) );
+			}
+		//back truss with beams, floor washes behind the band, uplights on the starfield backdrop
+		k.Truss( V3( -10, 8.6f, -5.2f ), V3( 10, 8.6f, -5.2f ) );
+		for( int i = 0; i < 10; ++i ) beams.push_back( k.Add( "moving-head-beam", V3( -9.0f + i * 2.0f, 8.6f - 0.165f, -5.2f ), V3( 180, 0, 0 ), "Beam " + std::to_string( i + 1 ) ) );
+		for( int i = 0; i < 8; ++i ) washes.push_back( k.Add( "moving-head-wash", V3( -10.5f + i * 3.0f, 2.0f, -4.4f ), V3( 0, 0, 0 ), "Floor wash " + std::to_string( i + 1 ) ) );
+		for( int i = 0; i < 12; ++i ) wall.push_back( k.Add( "led-par-rgbw", V3( -11.0f + i * 2.0f, 2.0f, -5.55f ), V3( -72, 0, 0 ), "Backdrop " + std::to_string( i + 1 ) ) );
+		k.Finish( 124 );
+		//start view: from the crowd, the whole roof in the picture
+		s.master     = 0.5f;//48 blinders towards the camera: half is plenty
+		s.hasView    = true;
+		s.viewTarget = V3( 0, 8.5f, 0 );
+		s.viewYaw    = 0;
+		s.viewPitch  = 0;
+		s.viewDist   = 42;
+		//---- look 1: the photo - afternoon, warm blinders glowing, cool whites on, purple starfield
+		for( auto* f : blinders ) if( f ) s.SetAttr( *f, Attr::Dimmer, 0.85f );
+		for( auto* f : cool ) if( f ) { s.SetAttr( *f, Attr::Dimmer, 0.22f ); }
+		for( size_t i = 0; i < sideCool.size(); ++i ) if( sideCool[ i ] ) s.SetAttr( *sideCool[ i ], Attr::Dimmer, i % 2 ? 0.8f : 0.22f );
+		for( size_t i = 0; i < wall.size(); ++i ) k.Rgb( wall[ i ], i % 3 == 1 ? V3( 0.25f, 0.2f, 1.0f ) : V3( 0.55f, 0.15f, 1.0f ), 0.9f );
+		for( size_t i = 0; i < beams.size(); ++i ) k.Mover( beams[ i ], V3( ( i - 4.5f ) * 5.0f, 6, 30 ), 0, "Color Wheel", 0 );
+		for( size_t i = 0; i < washes.size(); ++i ) { k.Mover( washes[ i ], V3( ( i - 3.5f ) * 2.4f, 2.0f, 2.5f ), 0.7f ); k.Rgb( washes[ i ], V3( 1, 0.95f, 0.9f ), 0.7f ); s.SetAttr( *washes[ i ], Attr::Zoom, 0.7f ); }
+		const auto BL = k.Ids( blinders ), CO = k.Ids( cool ), LG = k.Ids( sideCool ), BM = k.Ids( beams ), WA = k.Ids( washes ), WL = k.Ids( wall );
+		k.Group( "Blinders", BL );
+		k.Group( "Cool whites", CO );
+		k.Group( "Roof legs", LG );
+		k.Group( "Beams", BM );
+		k.Group( "Floor washes", WA );
+		k.Group( "Backdrop", WL );
+		static const char* kRow[ 3 ] = { "Row A (front)", "Row B", "Row C (back)" };
+		for( int c = 0; c < 3; ++c ) k.Group( kRow[ c ], rowIds[ c ] );
+		//starfield: the backdrop uplights twinkle
+		Effect& stars = k.Preset( "Funkeln", "Starfield twinkle", WL, 1.0f );
+		stars.lo      = 0.45f;
+		const int idStars = stars.id;
+		//blinders: soft chase from the middle outwards
+		Effect& chase = k.Preset( "Lauflicht weich", "Blinder chase", BL, 1.0f );
+		chase.beats   = 4;
+		chase.lo      = 0.12f;
+		chase.mirror  = true;
+		const int idChase = chase.id;
+		//cool whites: wave across the roof
+		Effect& wave = k.Preset( "Welle", "Cool white wave", CO, 1.0f );
+		wave.beats   = 8;
+		wave.lo      = 0.25f;
+		const int idWave = wave.id;
+		//all blinders: drawn hit, by hand (button, OSC or MIDI)
+		Effect& hit    = k.Fx( FxType::Envelope, "Blinder hit (trigger)", BL );
+		hit.manualTrig = true;
+		hit.envDrawn   = true;
+		hit.gate       = 2;
+		hit.pts        = { { 0, 0, 0 }, { 0.03f, 1, 0 }, { 0.25f, 0.3f, 2 }, { 1, 0, 1 } };
+		hit.hi         = 1;
+		const int idHit = hit.id;
+		//beams: fan from the middle, slow nod
+		Effect& fan  = k.Fx( FxType::Lfo, "Beam fan", BM );
+		fan.tgt.attr = Attr::Pan;
+		fan.relative = true;
+		fan.depth    = 0.16f;
+		fan.beats    = 16;
+		fan.mirror   = true;
+		fan.spread   = 180;
+		const int idFan = fan.id;
+		Effect& nod  = k.Fx( FxType::Lfo, "Beam nod", BM );
+		nod.tgt.attr = Attr::Tilt;
+		nod.relative = true;
+		nod.depth    = 0.12f;
+		nod.beats    = 8;
+		nod.spread   = 360;
+		const int idNod = nod.id;
+		const uint32_t a = k.Snap( "Afternoon (the photo)", 2.0f, { idStars } );
+		//---- look 2: chase
+		for( size_t i = 0; i < beams.size(); ++i ) if( beams[ i ] ) s.SetAttr( *beams[ i ], Attr::Dimmer, 1 );
+		const uint32_t b = k.Snap( "Chorus - chase and beams", 0.5f, { idStars, idChase, idWave, idFan, idHit } );
+		//---- look 3: everything
+		for( auto* f : blinders ) if( f ) s.SetAttr( *f, Attr::Dimmer, 1 );
+		for( auto* f : cool ) if( f ) s.SetAttr( *f, Attr::Dimmer, 1 );
+		for( auto* f : sideCool ) if( f ) s.SetAttr( *f, Attr::Dimmer, 1 );
+		for( size_t i = 0; i < washes.size(); ++i ) { k.Mover( washes[ i ], V3( ( i - 3.5f ) * 6.0f, 16, 24 ), 1 ); k.Rgb( washes[ i ], V3( 0.55f, 0.15f, 1.0f ), 1 ); s.SetAttr( *washes[ i ], Attr::Zoom, 0.2f ); }
+		const uint32_t c = k.Snap( "Finale - full blind", 0.1f, { idStars, idFan, idNod, idHit } );
+		k.CueAdd( "Afternoon", a );
+		k.CueAdd( "Chorus", b );
+		k.CueAdd( "Finale", c );
+		k.CueAdd( "Back to afternoon", a, 1, 16 );
+		s.LoadSnapshotToBase( 0 );
+		k.Only( { idStars } );
+		break;
+	}
 	default: return false;
 	}
 	s.dirty = false;

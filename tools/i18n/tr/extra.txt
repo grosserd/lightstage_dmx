@@ -198,3 +198,31 @@ Submaster %.1f %%	Submaster %.1f %%
 Submaster: skaliert die fertige Helligkeit der Lampen (Programmer, Snapshots und Effekte)	Submaster: scales the finished intensity of the fixtures (programmer, snapshots and effects)
 Als Submaster (skaliert die Ausgabe)	As submaster (scales the output)
 Nur für Dimmer-Gruppen.\nAus: der Regler setzt die Dimmer-Werte (der zuletzt bewegte gewinnt gegen Snapshots).\nAn: der Regler skaliert alles, was die Lampen ausgeben - auch Snapshots und Effekte.	Dimmer groups only.\nOff: the fader sets the dimmer values (the last one moved wins over snapshots).\nOn: the fader scales everything the fixtures output - snapshots and effects too.
+Leinwand \"%s\" liegt teilweise hinter dem Projektor und wurde ausgelassen.	Screen \"%s\" is partly behind the projector and was left out.
+Leinwand \"%s\" ist nur teilweise im Projektorbild.	Screen \"%s\" is only partly inside the projector picture.
+Datei kann nicht geschrieben werden	Cannot write the file
+Kein Projektor trifft eine Leinwand - nichts zu exportieren.	No projector hits a screen - nothing to export.
+Gespeichert: 	Saved: 
+Resolume-Preset gespeichert: 	Resolume preset saved: 
+Erzeugt ein Preset für den Advanced Output von Resolume Arena: je Projektor ein Screen (NDI-Ausgang), je getroffene Leinwand ein Slice, das genau auf der Leinwand landet. Leinwände mit Form bekommen Masken.	Creates a preset for the Advanced Output of Resolume Arena: one screen (NDI output) per projector, one slice per screen it hits, landing exactly on that screen. Shaped screens get masks.
+Preset-Name	Preset name
+Komposition (px)	Composition (px)
+Größe der Komposition in Resolume (Composition > Settings)	Size of the composition in Resolume (Composition > Settings)
+Inhalt	Content
+Ausschnitt im Seitenverhältnis der Leinwand\0Ganze Komposition (gestreckt)\0	Crop with the aspect of the screen\0Whole composition (stretched)\0
+Ausschnitt: aus der Mitte der Komposition wird ein Bereich mit dem Format der Leinwand genommen - nichts wird verzerrt.\nGanze Komposition: alles wird auf die Leinwand gestreckt.	Crop: an area with the format of the screen is taken from the middle of the composition - nothing is distorted.\nWhole composition: everything is stretched onto the screen.
+Leinwandform als Masken	Screen shape as masks
+Schwarze Bereiche einer Leinwand mit Form werden in Resolume ausmaskiert (kein Licht daneben).	Black areas of a shaped screen are masked out in Resolume (no light spilling next to it).
+Noch kein Projektor. Tab Video / Leinwand: + Projektor	No projector yet. Tab Video / Screen: + Projector
+-> Screen \"%s\"  %d x %d, NDI	-> screen \"%s\"  %d x %d, NDI
+trifft keine Leinwand	hits no screen
+Warp %d x %d Punkte, Abweichung %.2f px	Warp %d x %d points, deviation %.2f px
+%d Maske(n)	%d mask(s)
+Quelle ist noch nicht NDI.	Source is not NDI yet.
+%d Screen(s), %d Slice(s), %d Maske(n)	%d screen(s), %d slice(s), %d mask(s)
+In Resolume überschreiben	Overwrite in Resolume
+In Resolume speichern	Save to Resolume
+In Arena: Output > Advanced... > Presets > Preset wählen.\nDanach in LightStage als NDI-Quelle \"<Rechner> (Arena - <Screen>)\" wählen.	In Arena: Output > Advanced... > Presets > choose the preset.\nThen pick \"<computer> (Arena - <screen>)\" as NDI source in LightStage.
+Resolume-Preset exportieren...	Export Resolume preset...
+Resolume-Preset...	Resolume preset...
+Advanced-Output-Preset für Resolume aus Projektoren und Leinwänden erzeugen	Create an Advanced Output preset for Resolume from the projectors and screens

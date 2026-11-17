@@ -87,7 +87,7 @@ public:
 	//helpers shared with tests / demo
 	void BuildDemo();
 	void BuildJazzDemo();//2.1 start-up demo (jazz club)
-	bool BuildShowcase( int n, std::string& title );//example shows 0..4 (--showcase <dir>)
+	bool BuildShowcase( int n, std::string& title );//example shows 0..5 (--showcase <dir>)
 	FixtureInst* AddFixture( const FixtureDef* def, int mode, int uni, int addr, const V3& pos, const V3& rot, const std::string& name );
 	static bool AimAt( Show& s, FixtureInst& f, const V3& target );
 	void NewShow();

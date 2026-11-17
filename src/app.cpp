@@ -165,6 +165,13 @@ bool App::OpenShow( const std::string& path )
 		return false;
 	}
 	for( auto& m : show.models ) ren.EnsureModel( m, nullptr );
+	if( show.hasView )//start view of the show (example shows)
+	{
+		cam.target = show.viewTarget;
+		cam.yaw    = show.viewYaw;
+		cam.pitch  = show.viewPitch;
+		cam.dist   = show.viewDist;
+	}
 	sel.clear();
 	io.Apply();
 	UndoReset();

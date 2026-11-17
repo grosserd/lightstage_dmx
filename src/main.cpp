@@ -1,24 +1,41 @@
 // Grosserd LightStage - DMX 3D light visualizer
-// entry point: Win32 window, OpenGL 4.3 core context, Dear ImGui, command line modes
+// entry point: GLFW window, OpenGL core context (4.3 on Windows, 4.1 on macOS), Dear ImGui, command line modes
 #include "app.h"
 #include "imgui.h"
+#include <GL/glew.h>
 #include "backends/imgui_impl_opengl3.h"
-#include "backends/imgui_impl_win32.h"
+#include "backends/imgui_impl_glfw.h"
 #include "../third_party/stb_image_write.h"
-#include <GL/wglew.h>
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+#include <vector>
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <dbghelp.h>
-#include <atomic>
 #pragma comment( lib, "dbghelp.lib" )
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
 namespace ls
 {
 int RunSelfTest( App& app, const std::string& dir );
 }
 using namespace ls;
 
+#ifdef _WIN32
+static const char* const kPathSep = "\\";
+#else
+static const char* const kPathSep = "/";
+#endif
 static App* g_app = nullptr;
 static bool g_running = true;
 static bool g_uiTest  = false;//scripted UI test: the real mouse / keyboard / focus changes do not reach the UI
@@ -26,6 +43,7 @@ static bool g_uiTest  = false;//scripted UI test: the real mouse / keyboard / fo
 //---- hang diagnostics: heartbeat from the main loop and the window procedure (a 1 s timer keeps it
 //beating inside modal dialogs). No beat for 6 s -> memory image "haenger_<time>.dmp" next to the exe.
 static std::atomic< uint64_t > g_beat{ 0 };
+#ifdef _WIN32
 static void WriteHangDump( const char* why )
 {
 	SYSTEMTIME t;
@@ -55,41 +73,43 @@ static void StartHangWatch()
 	} ).detach();
 }
 
-static LRESULT CALLBACK WndProc( HWND h, UINT m, WPARAM w, LPARAM l )
+//heartbeat inside modal loops (file dialogs, moving / sizing the window): a thread timer keeps beating there
+static void CALLBACK HeartbeatTimer( HWND, UINT, UINT_PTR, DWORD ) { ++g_beat; }
+#else
+static void WriteHangDump( const char* why ) { Log( "Haenger (%s)", why ); }
+static void StartHangWatch() {}
+#endif
+
+//error before / instead of the main window
+static void FatalMessage( const std::string& msg )
+{
+	Log( "%s", msg.c_str() );
+#ifdef _WIN32
+	MessageBoxW( nullptr, Widen( msg ).c_str(), L"LightStage", MB_ICONERROR );
+#else
+	fprintf( stderr, "LightStage: %s\n", msg.c_str() );
+#endif
+}
+
+//---- GLFW callbacks. The UI test (g_uiTest) does not install the ImGui input callbacks: the real mouse,
+//keyboard and focus changes never reach the UI, only the script does.
+static void OnClose( GLFWwindow* w )
 {
 	++g_beat;
-	if( g_uiTest && ( ( m >= WM_MOUSEFIRST && m <= WM_MOUSELAST ) || ( m >= WM_KEYFIRST && m <= WM_KEYLAST ) || m == WM_MOUSELEAVE || m == WM_NCMOUSEMOVE || m == WM_NCMOUSELEAVE || m == WM_SETFOCUS || m == WM_KILLFOCUS || m == WM_INPUTLANGCHANGE ) )
-		return DefWindowProcW( h, m, w, l );
-	if( ImGui_ImplWin32_WndProcHandler( h, m, w, l ) ) return 1;
-	switch( m )
+	if( g_app && !g_app->ConfirmClose() )
 	{
-	case WM_CLOSE:
-		if( g_app && !g_app->ConfirmClose() ) return 0;
-		g_running = false;
-		return 0;
-	case WM_DROPFILES:
-	{
-		HDROP d = (HDROP)w;
-		UINT n  = DragQueryFileW( d, 0xFFFFFFFF, nullptr, 0 );
-		for( UINT i = 0; i < n; ++i )
-		{
-			wchar_t buf[ MAX_PATH * 4 ];
-			DragQueryFileW( d, i, buf, MAX_PATH * 4 );
-			if( g_app ) g_app->DropFile( Narrow( buf ) );
-		}
-		DragFinish( d );
-		return 0;
+		glfwSetWindowShouldClose( w, GLFW_FALSE );
+		return;
 	}
-	case WM_GETMINMAXINFO:
-	{
-		auto* mm = (MINMAXINFO*)l;
-		mm->ptMinTrackSize.x = 1024;
-		mm->ptMinTrackSize.y = 640;
-		return 0;
-	}
-	}
-	return DefWindowProcW( h, m, w, l );
+	g_running = false;
 }
+static void OnDrop( GLFWwindow*, int n, const char** paths )
+{
+	++g_beat;
+	for( int i = 0; i < n; ++i )
+		if( g_app && paths[ i ] ) g_app->DropFile( paths[ i ] );
+}
+static void OnGlfwError( int code, const char* text ) { Log( "GLFW %d: %s", code, text ? text : "" ); }
 
 static void Style( float scale )
 {
@@ -174,11 +194,10 @@ static void Style( float scale )
 	s.ScaleAllSizes( scale );
 }
 
-int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
+static int RunLightStage( const std::vector< std::string >& av )
 {
-	//command line
-	int argc        = 0;
-	LPWSTR* argvw   = CommandLineToArgvW( GetCommandLineW(), &argc );
+	//command line (UTF-8)
+	const int argc  = (int)av.size();
 	bool selftest   = false;
 	std::string uiTest;//scripted UI test: log file (uitest.cpp)
 	std::string shotUi, openPath, startTab, lang, screenMask, resOut, fxTypes, lbxOut, lbiIn, lbiMode, lbxUi;
@@ -195,44 +214,43 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	float shotScale = 0;
 	for( int i = 1; i < argc; ++i )
 	{
-		std::string a = Narrow( argvw[ i ] );
+		std::string a = av[ i ];
 		if( a == "--selftest" ) selftest = true;
-		else if( a == "--shotui" && i + 1 < argc ) shotUi = Narrow( argvw[ ++i ] );
-		else if( a == "--uitest" && i + 1 < argc ) uiTest = Narrow( argvw[ ++i ] );
-		else if( a == "--frames" && i + 1 < argc ) frames = _wtoi( argvw[ ++i ] );
-		else if( a == "--size" && i + 2 < argc ) { shotW = _wtoi( argvw[ i + 1 ] ); shotH = _wtoi( argvw[ i + 2 ] ); i += 2; }
-		else if( a == "--scale" && i + 1 < argc ) shotScale = (float)_wtof( argvw[ ++i ] );
-		else if( a == "--tab" && i + 1 < argc ) startTab = Narrow( argvw[ ++i ] );
+		else if( a == "--shotui" && i + 1 < argc ) shotUi = av[ ++i ];
+		else if( a == "--uitest" && i + 1 < argc ) uiTest = av[ ++i ];
+		else if( a == "--frames" && i + 1 < argc ) frames = atoi( av[ ++i ].c_str() );
+		else if( a == "--size" && i + 2 < argc ) { shotW = atoi( av[ i + 1 ].c_str() ); shotH = atoi( av[ i + 2 ].c_str() ); i += 2; }
+		else if( a == "--scale" && i + 1 < argc ) shotScale = (float)atof( av[ ++i ].c_str() );
+		else if( a == "--tab" && i + 1 < argc ) startTab = av[ ++i ];
 		else if( a == "--demo" ) demo = true;
 		else if( a == "--tldemo" ) tlDemo = true;
 		else if( a == "--tlwindow" ) tlWindow = true;
-		else if( a == "--bottom" && i + 1 < argc ) bottomH = (float)_wtof( argvw[ ++i ] );
-		else if( a == "--fxtypes" && i + 1 < argc ) fxTypes = Narrow( argvw[ ++i ] );//screenshots: e.g. 10,9,11 (FxType numbers), the last one selected
+		else if( a == "--bottom" && i + 1 < argc ) bottomH = (float)atof( av[ ++i ].c_str() );
+		else if( a == "--fxtypes" && i + 1 < argc ) fxTypes = av[ ++i ];//screenshots: e.g. 10,9,11 (FxType numbers), the last one selected
 		else if( a == "--decks" ) demoDecks = true;
 		else if( a == "--camfoh" ) camFoh = true;
 		else if( a == "--fxdrawn" ) fxDrawn = true;
-		else if( a == "--showcase" && i + 1 < argc ) showcaseDir = Narrow( argvw[ ++i ] );//writes the 5 example shows and quits
+		else if( a == "--showcase" && i + 1 < argc ) showcaseDir = av[ ++i ];//writes the 5 example shows and quits
 		else if( a == "--selectall" ) selectAll = true;
 		else if( a == "--oscwindow" ) oscWin = true;
 		else if( a == "--reswindow" ) resWin = true;
 		else if( a == "--lightshowwindow" ) lbxWin = true;
-		else if( a == "--lightshowui" && i + 1 < argc ) lbxUi = Narrow( argvw[ ++i ] );//test: export like the button (UI frame, engine running), then quit//screenshots: Lightshow export window
-		else if( a == "--importlightshow" && i + 1 < argc ) lbiIn = Narrow( argvw[ ++i ] );//opens the Lightshow import window with this file
-		else if( a == "--importmode" && i + 1 < argc ) lbiMode = Narrow( argvw[ ++i ] );//screenshots / tests: import at once (lanes, track, lanes-current, track-current)
-		else if( a == "--resolume" && i + 1 < argc ) resOut = Narrow( argvw[ ++i ] );//write the Advanced Output preset of the show and quit
+		else if( a == "--lightshowui" && i + 1 < argc ) lbxUi = av[ ++i ];//test: export like the button (UI frame, engine running), then quit//screenshots: Lightshow export window
+		else if( a == "--importlightshow" && i + 1 < argc ) lbiIn = av[ ++i ];//opens the Lightshow import window with this file
+		else if( a == "--importmode" && i + 1 < argc ) lbiMode = av[ ++i ];//screenshots / tests: import at once (lanes, track, lanes-current, track-current)
+		else if( a == "--resolume" && i + 1 < argc ) resOut = av[ ++i ];//write the Advanced Output preset of the show and quit
 		else if( a == "--ablwindow" ) ablWin = true;
-		else if( a == "--lightshow" && i + 1 < argc ) lbxOut = Narrow( argvw[ ++i ] );//export the show timeline as a Lightshow (.lightshow) and quit
-		else if( a == "--video" && i + 1 < argc ) vidOut = Narrow( argvw[ ++i ] );
-		else if( a == "--videosecs" && i + 1 < argc ) vidSecs = (float)_wtof( argvw[ ++i ] );
-		else if( a == "--videofrom" && i + 1 < argc ) vidFrom = (float)_wtof( argvw[ ++i ] );
-		else if( a == "--videocam" && i + 1 < argc ) vidCam = _wtoi( argvw[ ++i ] );
+		else if( a == "--lightshow" && i + 1 < argc ) lbxOut = av[ ++i ];//export the show timeline as a Lightshow (.lightshow) and quit
+		else if( a == "--video" && i + 1 < argc ) vidOut = av[ ++i ];
+		else if( a == "--videosecs" && i + 1 < argc ) vidSecs = (float)atof( av[ ++i ].c_str() );
+		else if( a == "--videofrom" && i + 1 < argc ) vidFrom = (float)atof( av[ ++i ].c_str() );
+		else if( a == "--videocam" && i + 1 < argc ) vidCam = atoi( av[ ++i ].c_str() );
 		else if( a == "--swap" ) swapDlg = true;
-		else if( a == "--lang" && i + 1 < argc ) lang = Narrow( argvw[ ++i ] );
-		else if( a == "--screen" && i + 1 < argc ) startScreen = _wtoi( argvw[ ++i ] );
-		else if( a == "--screenmask" && i + 1 < argc ) screenMask = Narrow( argvw[ ++i ] );
+		else if( a == "--lang" && i + 1 < argc ) lang = av[ ++i ];
+		else if( a == "--screen" && i + 1 < argc ) startScreen = atoi( av[ ++i ].c_str() );
+		else if( a == "--screenmask" && i + 1 < argc ) screenMask = av[ ++i ];
 		else if( a.size() && a[ 0 ] != '-' ) openPath = a;
 	}
-	LocalFree( argvw );
 	const bool scripted = !shotUi.empty() || !uiTest.empty();//fixed window size and frame time, no vsync, no autosave
 	g_uiTest            = !uiTest.empty();
 	//UI language before anything builds names: settings.json "language", --lang overrides, the self test runs in German
@@ -243,73 +261,84 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	}
 	if( !lang.empty() ) SetLang( lang );
 	if( selftest ) gLang = kLangDe;
+#ifdef _WIN32
 	SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 );
-
-	WNDCLASSEXW wc{};
-	wc.cbSize        = sizeof( wc );
-	wc.style         = CS_OWNDC;
-	wc.lpfnWndProc   = WndProc;
-	wc.hInstance     = inst;
-	wc.hCursor       = LoadCursor( nullptr, IDC_ARROW );
-	wc.hIcon         = LoadIconW( inst, MAKEINTRESOURCEW( 1 ) );
-	wc.hIconSm       = (HICON)LoadImageW( inst, MAKEINTRESOURCEW( 1 ), IMAGE_ICON, GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ), 0 );
-	wc.lpszClassName = L"GrosserdLightStage";
-	RegisterClassExW( &wc );
-	int sw = GetSystemMetrics( SM_CXSCREEN ), sh = GetSystemMetrics( SM_CYSCREEN );
+#endif
+	glfwSetErrorCallback( OnGlfwError );
+	if( !glfwInit() )
+	{
+		FatalMessage( L( "Fenstersystem konnte nicht starten (GLFW)." ) );
+		return 1;
+	}
+	//OpenGL core profile: 4.3 on Windows / Linux, 4.1 on macOS (the highest Apple offers; the shaders need nothing newer)
+#ifdef __APPLE__
+	const int glMinor        = 1;
+	const char* glslVersion  = "#version 410";
+	glfwWindowHint( GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE );
+#else
+	const int glMinor        = 3;
+	const char* glslVersion  = "#version 430";
+#endif
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 4 );
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, glMinor );
+	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE );
+	glfwWindowHint( GLFW_DEPTH_BITS, 24 );
+	glfwWindowHint( GLFW_VISIBLE, GLFW_FALSE );//shown after the start-up work below
+	int sw = 1920, sh = 1080;
+	if( const GLFWvidmode* vm = glfwGetVideoMode( glfwGetPrimaryMonitor() ) ) { sw = vm->width; sh = vm->height; }
 	int ww = std::min( 1720, sw - 80 ), wh = std::min( 1020, sh - 80 );
 	if( scripted ) { ww = shotW; wh = shotH; }
-	HWND hwnd = CreateWindowExW( 0, wc.lpszClassName, L"Grosserd LightStage", WS_OVERLAPPEDWINDOW, ( sw - ww ) / 2, ( sh - wh ) / 2, ww, wh, nullptr, nullptr, inst, nullptr );
-	DragAcceptFiles( hwnd, TRUE );
-	HDC dc = GetDC( hwnd );
-	PIXELFORMATDESCRIPTOR pfd{};
-	pfd.nSize      = sizeof( pfd );
-	pfd.nVersion   = 1;
-	pfd.dwFlags    = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-	pfd.iPixelType = PFD_TYPE_RGBA;
-	pfd.cColorBits = 32;
-	pfd.cDepthBits = 24;
-	int pf         = ChoosePixelFormat( dc, &pfd );
-	SetPixelFormat( dc, pf, &pfd );
-	HGLRC legacy = wglCreateContext( dc );
-	wglMakeCurrent( dc, legacy );
+	GLFWwindow* win = glfwCreateWindow( ww, wh, "Grosserd LightStage", nullptr, nullptr );
+	if( !win )
+	{
+		FatalMessage( glMinor == 3 ? L( "OpenGL 4.3 wird benoetigt (Grafiktreiber aktualisieren)." ) : L( "OpenGL 4.1 wird benoetigt." ) );
+		glfwTerminate();
+		return 1;
+	}
+	glfwSetWindowPos( win, ( sw - ww ) / 2, ( sh - wh ) / 2 );
+	glfwSetWindowSizeLimits( win, 1024, 640, GLFW_DONT_CARE, GLFW_DONT_CARE );
+	glfwSetWindowCloseCallback( win, OnClose );
+	glfwSetDropCallback( win, OnDrop );
+	glfwMakeContextCurrent( win );
 	glewExperimental = GL_TRUE;
 	glewInit();
-	HGLRC rc = legacy;
-	if( WGLEW_ARB_create_context )
+	glGetError();//GLEW on a core profile leaves GL_INVALID_ENUM behind
+#ifdef _WIN32
+	HWND hwnd = glfwGetWin32Window( win );
 	{
-		int attrs[] = { WGL_CONTEXT_MAJOR_VERSION_ARB, 4, WGL_CONTEXT_MINOR_VERSION_ARB, 3, WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB, 0 };
-		HGLRC core  = wglCreateContextAttribsARB( dc, nullptr, attrs );
-		if( core )
-		{
-			wglMakeCurrent( dc, core );
-			wglDeleteContext( legacy );
-			rc = core;
-			glewExperimental = GL_TRUE;
-			glewInit();
-			glGetError();
-		}
+		HINSTANCE inst = GetModuleHandleW( nullptr );
+		SendMessageW( hwnd, WM_SETICON, ICON_BIG, (LPARAM)LoadIconW( inst, MAKEINTRESOURCEW( 1 ) ) );
+		SendMessageW( hwnd, WM_SETICON, ICON_SMALL, (LPARAM)LoadImageW( inst, MAKEINTRESOURCEW( 1 ), IMAGE_ICON, GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ), 0 ) );
 	}
+	void* nativeWnd = hwnd;//file dialogs and message boxes are owned by it
+#else
+	void* nativeWnd = win;
+#endif
 	const char* ver = (const char*)glGetString( GL_VERSION );
 	const char* ren = (const char*)glGetString( GL_RENDERER );
 	Log( "OpenGL %s on %s", ver ? ver : "?", ren ? ren : "?" );
-	if( !GLEW_VERSION_4_3 )
-	{
-		MessageBoxA( hwnd, L( "OpenGL 4.3 wird benoetigt (Grafiktreiber aktualisieren)." ), "LightStage", MB_ICONERROR );
-		return 1;
-	}
-	if( WGLEW_EXT_swap_control ) wglSwapIntervalEXT( scripted ? 0 : 1 );
+	glfwSwapInterval( scripted ? 0 : 1 );
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io    = ImGui::GetIO();
 	io.IniFilename = nullptr;
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-	float scale = GetDpiForWindow( hwnd ) / 96.0f;
+	float scale = 1.0f;
+#ifndef __APPLE__
+	//Windows / Linux: the window works in pixels, the UI is scaled by the monitor's content scale (96 dpi = 1).
+	//macOS works in points and renders Retina through the framebuffer scale, so 1 is right there.
+	{
+		float sx = 1, sy = 1;
+		glfwGetWindowContentScale( win, &sx, &sy );
+		scale = sx;
+	}
+#endif
 	if( scale < 1.0f ) scale = 1.0f;
 	if( shotScale > 0 ) scale = shotScale;
 	Style( scale );
-	ImGui_ImplWin32_Init( hwnd );
-	ImGui_ImplOpenGL3_Init( "#version 430" );
+	ImGui_ImplGlfw_InitForOpenGL( win, !g_uiTest );
+	ImGui_ImplOpenGL3_Init( glslVersion );
 
 	App app;
 	g_app            = &app;
@@ -327,10 +356,10 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	if( !app.fontBig ) app.fontBig = app.fontUi;
 
 	std::string err;
-	if( !app.Init( hwnd, &err ) )
+	if( !app.Init( nativeWnd, &err ) )
 	{
 		Log( "init failed: %s", err.c_str() );
-		MessageBoxA( hwnd, ( L( "Renderer konnte nicht starten:\n" ) + err ).c_str(), "LightStage", MB_ICONERROR );
+		FatalMessage( L( "Renderer konnte nicht starten:\n" ) + err );
 		return 1;
 	}
 	if( selftest )
@@ -340,7 +369,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		int r = RunSelfTest( app, ExeDir() );
 		app.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
-		ImGui_ImplWin32_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
 		return r;
 	}
@@ -353,13 +382,17 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	else if( demo ) app.BuildDemo();
 	if( !showcaseDir.empty() )
 	{
+#ifdef _WIN32
 		CreateDirectoryW( Widen( showcaseDir ).c_str(), nullptr );
+#else
+		mkdir( showcaseDir.c_str(), 0755 );
+#endif
 		int ok = 0;
-		for( int k = 0; k < 5; ++k )
+		for( int k = 0; k < 6; ++k )
 		{
 			std::string title, e;
 			if( !app.BuildShowcase( k, title ) ) continue;
-			const std::string file = showcaseDir + "\\" + title + ".lightstage";
+			const std::string file = showcaseDir + kPathSep + title + ".lightstage";
 			if( app.show.Save( file, &e ) ) ++ok;
 			Log( "showcase %d: %s %s", k + 1, file.c_str(), e.c_str() );
 		}
@@ -378,15 +411,15 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 				}
 			app.show.tl.Locate( app.show, 0 );
 			std::string e;
-			const std::string file = showcaseDir + "\\06 Show Time Line - Cues, Clips & Fans.lightstage";
+			const std::string file = showcaseDir + kPathSep + "06 Show Time Line - Cues, Clips & Fans.lightstage";
 			if( app.show.Save( file, &e ) ) ++ok;
 			Log( "showcase 6: %s %s", file.c_str(), e.c_str() );
 		}
 		app.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
-		ImGui_ImplWin32_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
-		return ok == 6 ? 0 : 1;
+		return ok == 7 ? 0 : 1;
 	}
 	if( !resOut.empty() )
 	{
@@ -396,7 +429,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		const bool ok = WriteResolumePreset( resOut, ResolumePresetXml( lay, ro ), e );
 		app.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
-		ImGui_ImplWin32_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
 		return ok ? 0 : 1;
 	}
@@ -433,7 +466,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		Log( "lightshow export %s: %s %s", lbxOut.c_str(), ok ? "ok" : "failed", e.c_str() );
 		app.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
-		ImGui_ImplWin32_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
 		return ok ? 0 : 1;
 	}
@@ -455,7 +488,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		Log( "video export %s: %s %s", vidOut.c_str(), ok ? "ok" : "failed", app.exp_.err.c_str() );
 		app.Shutdown();
 		ImGui_ImplOpenGL3_Shutdown();
-		ImGui_ImplWin32_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
 		return ok ? 0 : 1;
 	}
@@ -515,9 +548,10 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	if( !lbiIn.empty() && !lbiDone ) app.LbiOpen( lbiIn );
 	if( ablWin ) app.ShowAbletonWindow();
 	if( swapDlg ) app.OpenSwapDialog( app.sel );
-	ShowWindow( hwnd, SW_SHOWDEFAULT );
-	UpdateWindow( hwnd );
-	SetTimer( hwnd, 77, 1000, nullptr );//heartbeat inside modal loops
+	glfwShowWindow( win );
+#ifdef _WIN32
+	SetTimer( nullptr, 0, 1000, HeartbeatTimer );//heartbeat inside modal loops
+#endif
 	if( !scripted ) StartHangWatch();
 
 	//normal start: user settings (performance mode) and the input engine thread
@@ -535,16 +569,11 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 	while( g_running && !app.WantsQuit() )
 	{
 		++g_beat;
-		MSG msg;
-		while( PeekMessageW( &msg, nullptr, 0, 0, PM_REMOVE ) )
-		{
-			TranslateMessage( &msg );
-			DispatchMessageW( &msg );
-		}
+		glfwPollEvents();
 		if( !g_running ) break;
-		if( IsIconic( hwnd ) )
+		if( glfwGetWindowAttrib( win, GLFW_ICONIFIED ) )
 		{
-			Sleep( 20 );
+			glfwWaitEventsTimeout( 0.02 );
 			last = Now();
 			continue;
 		}
@@ -553,7 +582,7 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		float dt   = (float)Clamp( now - last, 0.0, 0.1 );
 		last       = now;
 		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplWin32_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
 		if( g_uiTest ) app.UiTestInput();//after the backend: the script's mouse wins over the real one
 		ImGui::NewFrame();
 		ImGui::PushFont( app.fontUi );
@@ -562,67 +591,81 @@ int WINAPI wWinMain( HINSTANCE inst, HINSTANCE, PWSTR, int )
 		if( g_uiTest && app.UiTestDone() ) { Log( "ui test: end, %d FAIL", app.UiTestFails() ); uiTestRc = app.UiTestFails() ? 1 : 0; break; }
 		if( app.lbxUiState >= 2 ) { Log( "lightshow ui test: end (state %d)", app.lbxUiState ); break; }
 		ImGui::Render();
-		RECT r;
-		GetClientRect( hwnd, &r );
+		int fbW = 0, fbH = 0;
+		glfwGetFramebufferSize( win, &fbW, &fbH );
 		glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-		glViewport( 0, 0, r.right, r.bottom );
+		glViewport( 0, 0, fbW, fbH );
 		glClearColor( 0.06f, 0.06f, 0.07f, 1 );
 		glClear( GL_COLOR_BUFFER_BIT );
 		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
 		++frame;
 		if( !shotUi.empty() && frame >= std::max( frames, 240 ) )
 		{
-			std::vector< uint8_t > px( (size_t)r.right * r.bottom * 4 );
+			std::vector< uint8_t > px( (size_t)fbW * fbH * 4 );
 			glReadBuffer( GL_BACK );
 			glPixelStorei( GL_PACK_ALIGNMENT, 1 );
-			glReadPixels( 0, 0, r.right, r.bottom, GL_RGBA, GL_UNSIGNED_BYTE, px.data() );
+			glReadPixels( 0, 0, fbW, fbH, GL_RGBA, GL_UNSIGNED_BYTE, px.data() );
 			std::vector< uint8_t > flip( px.size() );
-			for( int y = 0; y < r.bottom; ++y ) memcpy( &flip[ (size_t)y * r.right * 4 ], &px[ (size_t)( r.bottom - 1 - y ) * r.right * 4 ], (size_t)r.right * 4 );
+			for( int y = 0; y < fbH; ++y ) memcpy( &flip[ (size_t)y * fbW * 4 ], &px[ (size_t)( fbH - 1 - y ) * fbW * 4 ], (size_t)fbW * 4 );
 			for( size_t i = 3; i < flip.size(); i += 4 ) flip[ i ] = 255;
-			stbi_write_png( shotUi.c_str(), r.right, r.bottom, 4, flip.data(), r.right * 4 );
+			stbi_write_png( shotUi.c_str(), fbW, fbH, 4, flip.data(), fbW * 4 );
 			break;
 		}
-		SwapBuffers( dc );
+		glfwSwapBuffers( win );
 		//performance mode: no vsync, the UI runs at 30 fps while used and 10 fps when idle (wakes up on input)
 		{
 			const double iv = scripted ? 0.0 : app.FrameInterval();
 			const int want  = scripted ? 0 : ( iv > 0 ? 0 : 1 );
-			if( want != swapInterval && WGLEW_EXT_swap_control )
+			if( want != swapInterval )
 			{
-				wglSwapIntervalEXT( want );
+				glfwSwapInterval( want );
 				swapInterval = want;
 			}
-			while( iv > 0 && g_running )
+			if( iv > 0 && g_running )
 			{
-				double left = frameStart + iv - Now();
-				if( left <= 0.0005 ) break;
-				DWORD r = MsgWaitForMultipleObjects( 0, nullptr, FALSE, (DWORD)std::max( 1.0, left * 1000.0 ), QS_ALLINPUT );
-				if( r == WAIT_OBJECT_0 ) break;//input or other messages: handle them now
+				//sleep until the frame is due; any input wakes up at once and is handled in the next frame
+				const double left = frameStart + iv - Now();
+				if( left > 0.0005 ) glfwWaitEventsTimeout( left );
 			}
 		}
 		std::string title = "Grosserd LightStage - " + ( app.show.path.empty() ? std::string( L( "Unbenannt" ) ) : FileName( app.show.path ) ) + ( app.show.dirty ? " *" : "" );
 		if( title != lastTitle )
 		{
-			SetWindowTextW( hwnd, Widen( title ).c_str() );
+			glfwSetWindowTitle( win, title.c_str() );
 			lastTitle = title;
 		}
 	}
 	//closing: the window goes away at once; if a driver (Enttec, MIDI, NDI, video) blocks the clean-up,
 	//a watchdog ends the process after 4 s (the show was saved / confirmed before)
-	ShowWindow( hwnd, SW_HIDE );
+	glfwHideWindow( win );
 	std::thread( [] {
-		Sleep( 4000 );
+		std::this_thread::sleep_for( std::chrono::seconds( 4 ) );
 		WriteHangDump( "Beenden haengt seit 4 s" );
 		Log( "shutdown: haengt seit 4 s, Prozess wird beendet" );
-		ExitProcess( 0 );
+		std::_Exit( 0 );
 	} ).detach();
 	app.Shutdown();
 	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplWin32_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();
-	wglMakeCurrent( nullptr, nullptr );
-	wglDeleteContext( rc );
-	ReleaseDC( hwnd, dc );
-	DestroyWindow( hwnd );
+	glfwDestroyWindow( win );
+	glfwTerminate();
 	return uiTestRc;
 }
+
+#ifdef _WIN32
+int WINAPI wWinMain( HINSTANCE, HINSTANCE, PWSTR, int )
+{
+	int argc      = 0;
+	LPWSTR* argvw = CommandLineToArgvW( GetCommandLineW(), &argc );
+	std::vector< std::string > av;
+	for( int i = 0; i < argc; ++i ) av.push_back( Narrow( argvw[ i ] ) );
+	LocalFree( argvw );
+	return RunLightStage( av );
+}
+#else
+int main( int argc, char** argv )
+{
+	return RunLightStage( std::vector< std::string >( argv, argv + argc ) );
+}
+#endif
