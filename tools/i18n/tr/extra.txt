@@ -1,0 +1,200 @@
+Arbeitslicht	Work light
+Bodenfarbe	Floor colour
+Deckenmontage	Ceiling mount
+Farbmakro	Colour macro
+Farbrad	Colour wheel
+Goborad	Gobo wheel
+Kanalbelegung	Channel assignment
+Kurzname	Short name
+Lampenbibliothek	Fixture library
+Lauflicht	Chase
+Modusname	Mode name
+Notenbelegung	Note assignment
+Phasenversatz	Phase offset
+Programme	Programs
+Schwarzwert	Black level
+Senderate (Hz)	Send rate (Hz)
+Startadresse	Start address
+Stative	Stands
+Taktanfang	Bar start
+Taktanfang (Resync)	Bar start (resync)
+Taster	Button
+Taster %d   %s##b%d	Button %d   %s##b%d
+ Taster 	 button 
+Traverse	Truss
++ Traverse	+ Truss
+Traverse 	Truss 
+Stadtnacht	City night
+Warmton	Warm tone
+Sinus	Sine
+Was	What
+An	On
+AN	ON
+Adr	Addr
+U.Adr	U.Addr
+Learn AN	Learn ON
+MIDI Learn: AN	MIDI Learn: ON
+Tempo (BPM, intern)	Tempo (BPM, internal)
+Tempoquelle (0 Intern, 1 MIDI-Clock, 2 Link)	Tempo source (0 internal, 1 MIDI clock, 2 Link)
+Intern / Tap\0MIDI-Clock\0Ableton Link\0	Internal / tap\0MIDI clock\0Ableton Link\0
+Energieplan: %s	Power plan: %s
+Filter (z.B. fx, stage, fixture/3)	Filter (e.g. fx, stage, fixture/3)
+Fixture-Editor - 	Fixture Editor - 
+Form	Shape
+Ch	Ch
+Inv	Inv
+ an / 	 on / 
+Standard	Default
+Material	Material
+Preset-Name	Preset name
+Dimmer / Halogen	Dimmer / halogen
+Pixel (Bar / Matrix)	Pixel (bar / matrix)
+Tap-Tempo	Tap tempo
+MIDI-Clock	MIDI clock
+Lens Shift H / V	Lens shift H / V
+Pan  %5.1f deg	Pan  %5.1f deg
+Haze %.2f	Haze %.2f
+Look 2 - Magenta/Cyan	Look 2 - Magenta/Cyan
+ Proj. 	 proj. 
+ Frames	 frames
+Schwarzwert	Black level
+Kanalbelegung	Channel map
+Notenbelegung	Note map
+Pan/Tilt-Speed	Pan/tilt speed
+Gobo-Rotation	Gobo rotation
+Shutter/Strobe	Shutter/strobe
+%s   %s   Stand %.1f kB%s	%s   %s   state %.1f kB%s
+MIDI-Monitor (%llu)	MIDI monitor (%llu)
+Ableton-Bridge (Max for Live)	Ableton bridge (Max for Live)
+Ableton-Bridge: 	Ableton bridge: 
+NDI-Runtime: %s	NDI runtime: %s
+Show-ID %s	Show ID %s
+Leinwandform geladen: 	Screen shape loaded: 
+Form aus Bild laden...	Load shape from image...
+Bilder (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Alle Dateien\0*.*\0	Images (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0All files\0*.*\0
+Schwarz-Weiß-Bild im Seitenverhältnis 1:1 (quadratisch, z. B. 1024 x 1024). Weiß = Leinwand, Schwarz = frei - so entstehen beliebige Formen.	Black-and-white image with a 1:1 aspect ratio (square, e.g. 1024 x 1024). White = screen, black = empty - so any shape is possible.
+(aus der Show)	(from the show)
+%d Flächen, Raster %d x %d	%d areas, grid %d x %d
+Anderes Bild...	Other image...
+Schwarz-Weiß-Bild im Seitenverhältnis 1:1 (quadratisch). Weiß = Leinwand, Schwarz = frei.	Black-and-white image with a 1:1 aspect ratio (square). White = screen, black = empty.
+Form entfernen	Remove shape
+Zurück zur rechteckigen Leinwand	Back to the rectangular screen
+Format ist nicht 1:1 - die Form wird verzerrt.	Format is not 1:1 - the shape is distorted.
+Nur bei rechteckigen Leinwänden	Only for rectangular screens
+Kein lesbares Bild (PNG, JPG oder BMP): 	Not a readable image (PNG, JPG or BMP): 
+Das Bild hat keine weißen Flächen - Weiß = Leinwand.	The image has no white areas - white = screen.
+Bild ist nicht 1:1 (%d x %d) - es wurde mittig ins Quadrat eingepasst.	Image is not 1:1 (%d x %d) - it was centred in the square.
+HTTP-Port	HTTP port
+UDP-Port	UDP port
+HTTP-Port 	HTTP port 
+Bearbeiten	Edit
+Rückgängig	Undo
+Wiederherstellen	Redo
+Nichts rückgängig zu machen	Nothing to undo
+Nichts wiederherzustellen	Nothing to redo
+Rückgängig gemacht	Undone
+Wiederhergestellt	Redone
+Video exportieren...	Export video...
+alle %d Minuten	every %d minutes
+Nach einem Absturz bietet LightStage beim\nnächsten Start die Wiederherstellung an.	After a crash LightStage offers to restore\nthe changes on the next start.
+Wiederhergestellt: 	Restored: 
+neue Show	new show
+ - bitte speichern	 - please save
+%s, Stand %02d.%02d.%04d %02d:%02d	%s, saved %02d.%02d.%04d %02d:%02d
+LightStage wurde nicht normal beendet.	LightStage was not closed normally.
+Automatisch gesicherte Änderungen wiederherstellen?\n%s	Restore the automatically saved changes?\n%s
+Änderungen wiederherstellen	Restore changes
+Verwerfen	Discard
+Video-Export fehlgeschlagen: 	Video export failed: 
+Video exportiert: %s (%d Bilder, %.0f s Rechenzeit)	Video exported: %s (%d frames, %.0f s to render)
+Video-Export abgebrochen	Video export cancelled
+Video-Export	Video export
+Läuft %.0f s, noch etwa %.0f s	Running %.0f s, about %.0f s left
+Die Show wird Bild für Bild berechnet (unabhängig von der echten Zeit).	The show is calculated frame by frame (independent of real time).
+abgebrochen	cancelled
+Bildrate	Frame rate
+Dauer	Duration
+Aktuelle Ansicht\0Kamerafahrt 360°\0Kamera pendelt ±45°\0	Current view\0Camera orbit 360°\0Camera swing ±45°\0
+Cue-Liste von vorn abspielen	Play the cue list from the start
+Startet Cue 1. Cues mit \"Folgen\" laufen nach, Timecode-Cues zur simulierten Timecode-Zeit.	Starts cue 1. \"Follow\" cues follow, timecode cues fire at the simulated timecode.
+Timecode ab (s)	Timecode from (s)
+H.264 / MP4. Effekte und Snapshots laufen weiter wie gerade eingestellt;\nwährend des Exports ruht die MIDI-/OSC-Steuerung.	H.264 / MP4. Effects and snapshots keep running as they are set now;\nMIDI / OSC control pauses during the export.
+%d Lampen zielen auf %.1f / %.1f / %.1f m	%d fixtures aim at %.1f / %.1f / %.1f m
+Fächer Pan %.0f°	Fan pan %.0f°
+Ziehen: Pan der Auswahl von links nach rechts auffächern (negativ = gespiegelt).\nStartpunkt = aktuelle Werte beim Anklicken.	Drag: fan the pan of the selection from left to right (negative = mirrored).\nStarting point = the values when you click.
+Fächer Tilt %.0f°	Fan tilt %.0f°
+Ziehen: Tilt der Auswahl von links nach rechts auffächern	Drag: fan the tilt of the selection from left to right
+Ziel klicken...	Click target...
+Zielen...	Aim...
+Moving Heads / Scanner der Auswahl auf einen Punkt richten	Point the selected moving heads / scanners at one spot
+Punkt im 3D-Fenster anklicken	Click a point in the 3D view
+Auf diesen Punkt zielen	Aim at this point
+Bühnenmitte	Stage centre
+Cue-Liste	Cue list
+Cue GO (nächster)	Cue GO (next)
+Cue zurück	Cue back
+Cue-Liste stoppen	Stop cue list
+Cue Nummer starten	Start cue number
+Cue-Liste folgt Timecode	Cue list follows timecode
+Skalieren	Scale
+Aus: der Effekt ersetzt den Dimmer.\nAn: der Effekt läuft innerhalb des Werts darunter (Programmer, Gruppenfader, Snapshot) -\nbei 50 %% Grundhelligkeit pendelt er zwischen 0 und 50 %%.	Off: the effect replaces the dimmer.\nOn: the effect runs inside the value underneath (programmer, group fader, snapshot) -\nat 50 %% base level it swings between 0 and 50 %%.
+Paletten	Palettes
+sACN senden	Send sACN
+Jedes Universe mit 'Out' in der Patch-Liste geht auf sACN-Universe = seine Nummer.\nOhne Ziel-IP: Multicast 239.255.x.y (Standard).	Every universe with 'Out' in the patch list goes to the sACN universe of the same number.\nNo target IP: multicast 239.255.x.y (standard).
+Priorität	Priority
+sACN Ziel-IP	sACN target IP
+leer = Multicast	empty = multicast
+sACN gesendet: %llu Pakete	sACN sent: %llu packets
+%d Lampe%s: ein Gruppenfader wurde nach dem Start bewegt und hat dort Vorrang.\nKlick: Snapshot neu starten - dann gelten wieder alle seine Werte.	%d fixture%s: a group fader was moved after the start and wins there.\nClick: restart the snapshot - then all its values apply again.
+Nächsten Cue starten (Leertaste)	Start the next cue (space bar)
+Zurück	Back
+Snapshots der Cue-Liste ausblenden, zurück auf Anfang	Fade out the cue list snapshots, back to the start
+Aktuell: %d %s	Current: %d %s
+Aktuell: -	Current: -
+Timecode folgen (MTC)	Follow timecode (MTC)
+Cues mit Auslöser \"Timecode\" starten, wenn der MIDI-Timecode ihre Zeit erreicht.\nAbleton: Einstellungen > Link/Tempo/MIDI > MIDI-Port Sync an, Typ MIDI Timecode.\nSprung im Timecode: der passende Cue wird direkt gestartet.	Cues with trigger \"Timecode\" start when the MIDI timecode reaches their time.\nAbleton: Settings > Link/Tempo/MIDI > MIDI port Sync on, type MIDI Timecode.\nJump in the timecode: the matching cue starts directly.
+kein Timecode	no timecode
++ Cue	+ Cue
+Neuer Cue hinter dem aktuellen, mit dem zuletzt gestarteten Snapshot.\nMit Timecode: die aktuelle Zeit wird übernommen.	New cue after the current one, with the snapshot started last.\nWith timecode: the current time is taken.
++ Cues aus allen Snapshots	+ Cues from all snapshots
+zuerst Snapshots anlegen	create snapshots first
+Eine Cue-Liste spielt Snapshots der Reihe nach ab: mit GO, automatisch nacheinander oder per Timecode aus Ableton.	A cue list plays snapshots in order: with GO, automatically one after the other or by timecode from Ableton.
+Auslöser	Trigger
+Zeit	Time
+Andere aus	Others off
+Diesen Cue jetzt starten	Start this cue now
+(keiner - nur ausblenden)	(none - fade out only)
+An: eigene Fade-Zeit für diesen Cue (ein- und ausblenden)\nAus: Fade-Zeit des Snapshots	On: own fade time for this cue (in and out)\nOff: fade time of the snapshot
+Snapshot (%.1f s)	Snapshot (%.1f s)
+GO\0Folgen\0Timecode\0	GO\0Follow\0Timecode\0
+GO: mit GO / Leertaste\nFolgen: automatisch, sobald der vorige Cue eingeblendet ist (+ Wartezeit)\nTimecode: zur eingetragenen MIDI-Timecode-Zeit	GO: with GO / space bar\nFollow: automatically once the previous cue has faded in (+ wait)\nTimecode: at the entered MIDI timecode
+warten %.1f s	wait %.1f s
+hh:mm:ss:ff (oder mm:ss / Sekunden), Enter übernimmt	hh:mm:ss:ff (or mm:ss / seconds), Enter applies
+jetzt	now
+Aktuelle Timecode-Zeit übernehmen	Take the current timecode
+An: Snapshots der anderen Cues werden ausgeblendet (Cue = ganzes Bild)\nAus: dieser Snapshot kommt dazu	On: the snapshots of the other cues fade out (cue = whole look)\nOff: this snapshot is added
+Jetzt starten	Start now
+Nach unten	Move down
++ Farbpalette	+ Colour palette
++ Positionspalette aus Auswahl (	+ Position palette from selection (
+Position 	Position 
+Keine der ausgewählten Lampen hat Pan/Tilt	None of the selected fixtures has pan/tilt
+Klick auf \"Anwenden\" setzt die Palette bei den ausgewählten Lampen. Snapshots merken sich Palettenwerte: Palette ändern = alle Snapshots damit ändern sich mit.	\"Apply\" sets the palette on the selected fixtures. Snapshots remember palette values: change the palette = every snapshot using it changes too.
+Verwendet	Used
+Ändern wirkt sofort in allen Snapshots mit dieser Farbe	Changes apply at once to every snapshot with this colour
+Position: %d Lampe%s	Position: %d fixture%s
+Klick: Lampen auswählen	Click: select fixtures
+Anwenden (%d)	Apply (%d)
+ Lampen	 fixtures
+Auf die ausgewählten Lampen (ohne Auswahl: auf alle Lampen der Palette)	To the selected fixtures (no selection: to all fixtures of the palette)
+Auf die ausgewählten Lampen	To the selected fixtures
+in %d Snapshot%s	in %d snapshot%s
+in keinem Snapshot	in no snapshot
+Aus Auswahl aktualisieren (	Update from selection (
+ aktualisiert, Snapshots geändert: 	 updated, snapshots changed: 
+Übernimmt Pan/Tilt der ausgewählten Lampen in die Palette - alle Snapshots damit ändern sich mit	Takes pan/tilt of the selected fixtures into the palette - every snapshot using it changes too
+Die Snapshots behalten ihre Werte, folgen der Palette aber nicht mehr	The snapshots keep their values but no longer follow the palette
+Submaster %.1f %%	Submaster %.1f %%
+Submaster: skaliert die fertige Helligkeit der Lampen (Programmer, Snapshots und Effekte)	Submaster: scales the finished intensity of the fixtures (programmer, snapshots and effects)
+Als Submaster (skaliert die Ausgabe)	As submaster (scales the output)
+Nur für Dimmer-Gruppen.\nAus: der Regler setzt die Dimmer-Werte (der zuletzt bewegte gewinnt gegen Snapshots).\nAn: der Regler skaliert alles, was die Lampen ausgeben - auch Snapshots und Effekte.	Dimmer groups only.\nOff: the fader sets the dimmer values (the last one moved wins over snapshots).\nOn: the fader scales everything the fixtures output - snapshots and effects too.

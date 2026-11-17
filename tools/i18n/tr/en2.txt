@@ -1,0 +1,285 @@
+280	Type
+281	Physical
+282	Dimensions mm
+283	Width / height / depth in millimetres
+284	Weight kg
+285	Power W
+286	Colour temperature
+287	min / max (without a zoom channel, min applies)
+288	0 = no pixels. Otherwise the channels below are repeated for every pixel.
+289	Channels per pixel:
+290	Right-click: remove
+291	+ Pixel channel
+292	Template RGB
+293	Template RGBW
+294	Mode 
+295	Delete mode
+296	%d channels
+297	+ Channel
+298	+ Template
+299	+ Channel from another mode
+300	none
+301	Pixels in this mode
+302	Inverted (255 -> 0)
+303	Range
+304	16 bit (fine channel) recommended for smooth movement.
+305	Angle from / to
+306	Kelvin from / to
+307	Hz from / to
+308	0-9 open, 10-255 strobe slow -> fast
+309	0-127 closed, 128-255 open
+310	0-127 off, 128-255 prism
+311	closed\0open\0strobe\0pulse\0random\0
+312	+ Range
+313	Default template
+314	Rainbow chase (upper half)
+315	%s (equal DMX ranges):
+316	Colours
+317	+ Colour
+318	No further settings for this channel type.
+319	Click a channel in the list for details\n(ranges, colours, gobos, strobe).
+320	Note
+321	Save + test
+322	Saves and puts a test fixture at the front of the stage (removed on close)
+323	As new fixture
+324	New name - save as a custom fixture
+325	New
+326	File: library\\user\\%s\\%s.json
+328	OpenGL 4.3 is required (update your graphics driver).
+329	Renderer could not start:\n
+330	white
+331	embedded image
+332	Fixtures › 
+333	free
+334	no socket
+335	Snapshots & groups
+336	 start
+337	 on/off
+338	 toggle
+339	 strength
+340	 fade time (s)
+341	Group 
+342	 brightness
+343	 hue
+344	 saturation
+345	Stage & environment
+346	Haze structure
+347	Ambient light
+348	Ambient (factor)
+349	Ambient colour red
+350	Ambient colour green
+351	Ambient colour blue
+352	Exposure
+353	Beam quality
+354	Light beams
+355	Stage width (m)
+356	Stage depth (m)
+357	Deck height (m)
+358	Deck
+359	Back wall
+360	Place (0 hall, 1 outdoor)
+361	Ground (0 hall .. 5 wood)
+362	Stars
+363	Moon
+364	Moon direction (degrees)
+365	Moon height (degrees)
+366	Moon casts shadows
+367	Distant haze
+368	Mood: 
+369	Tempo & effects
+370	All effects off
+371	Effects overall (amount)
+372	Tempo × (all effects, centre = 1)
+373	Freeze effects
+374	Stop program
+375	next program
+376	previous program
+377	Program 
+378	Effect 
+379	: on/off
+380	: toggle
+381	: amount
+382	: beats per cycle
+383	: free frequency (Hz)
+384	: phase offset (degrees)
+385	: width
+386	: pan size (degrees)
+387	: tilt size (degrees)
+388	Selected effect
+389	Selected effect: number in the list
+390	Selected effect: next
+391	Selected effect: previous
+392	Fixtures
+394	 (degrees)
+395	: beam angle (degrees, 0 = profile)
+396	Video / Screen
+397	Projector 
+398	Pan (degrees)
+399	Tilt (degrees)
+400	Roll (degrees)
+401	Throw ratio
+402	Blur
+403	Screen 
+404	: width (m)
+405	: height (m)
+406	: rotation (degrees)
+407	: tilt (degrees)
+408	Objects
+409	Model 
+410	: scale
+411	on/off
+412	toggle
+413	Amount
+414	Beats per cycle
+415	Free frequency (Hz)
+416	Phase offset (degrees)
+417	Width
+418	Pan size (degrees)
+419	Tilt size (degrees)
+420	Flash (on while held)
+421	synced to tempo
+422	Cycle in steps (0 = 1/4 .. 8 = 64 beats)
+423	Fade in/out time (s)
+424	Order (0 selection, 1 L-R, 2 F-B, 3 centre-out, 4 random)
+425	Groups (0 = off)
+426	mirror
+427	reverse
+428	individual pixels
+429	restart (phase to 0)
+430	Open shutter
+431	Waveform (0 sine, 1 triangle, 2 saw up, 3 saw down, 4 square, 5 pulse, 6 random)
+432	Shape (0 circle, 1 figure eight, 2 pan, 3 tilt, 4 triangle, 5 square, 6 random)
+433	Mode (0 rainbow, 1 gradient, 2 steps)
+434	Attribute (number in the list of fixture attributes)
+435	Colour 
+436	Hue
+437	Saturation
+438	0 / 1 (off / on)
+439	Trigger (1)
+441	 (missing)
+442	Hall neutral
+443	Open air night
+444	Blue hour
+445	Completely dark
+447	Program
+448	Group
+449	Projector
+450	Screen
+451	 peers
+452	Link: alone (Ableton: switch Link on)
+453	Copy OSC address: 
+454	Copied: 
+455	Value: %s
+456	Learn MIDI...
+457	Send to Ableton
+458	All OSC addresses...
+459	OSC addresses
+460	All parameters via OSC (UDP port %d, switch on in the 'Output / Interface' tab). Values in the given unit; fixture attributes 0..1 or 0..255 (int). Click a row to copy the address. Pixel fixtures: address + /<pixel>. Colour in one message: /ls/fixture/<id>/color r g b. DMX directly: /ls/dmx/<universe>/<channel>.
+461	OSC input is on.
+462	OSC input is off.
+463	Switch on
+464	Export list...
+465	\xEF\xBB\xBFAddress;Parameter;Range;Group;Current value\r\n
+466	Grosserd LightStage - OSC addresses (UDP port 
+467	\r\n[Fixtures, short forms]\r\n/ls/fixture/<id>/color r g b      additive colour\r\n/ls/fixture/<id>/<attribute>/<pixel>  single pixel\r\n/ls/dmx/<universe>/<channel>        0..1 or 0..255 (int)\r\n
+468	OSC list saved: 
+469	Saving failed
+470	%d of %d
+471	Address
+472	no custom fixture
+473	is used in the show
+474	Internal: BPM + tap. MIDI clock: from Ableton/DAW (MIDI track > Sync to loopMIDI). Ableton Link: network sync (switch 'Link' on in Live).
+475	Now is beat 1 (effects jump to the start of the bar)
+476	Effects %.2f
+477	Hold
+478	Click = effect for all matching fixtures
+479	Click = effect for the selection (%d fixtures)
+480	Effect '
+481	' started
+482	No matching fixture for '
+483	Delete preset
+484	Custom presets
+485	Starts only the effects of this program (%d)
+486	Delete program (effects stay)
+487	No programs yet.
+488	+ from running effects
+489	+ Template...
+490	Program '
+491	' created and started
+492	No matching fixtures for the program
+493	Effects (%d)
+494	off
+495	Select fixtures
+496	%s | %d fixtures | No. %d
+497	 copy
+498	Click a preset on the left -\nthe effect starts immediately on\nthe selected fixtures.
+499	Select an effect in the list to edit it.
+500	Running - stop
+501	Start
+502	Restart
+503	No. %d  OSC %s
+504	Brightness\0Colour\0Movement (pan/tilt)\0Attribute\0
+505	Sine\0Triangle\0Saw up\0Saw down\0Square\0Pulse\0Random\0
+506	Brightness min/max
+507	Range min/max
+508	Fixtures with a shutter channel: shutter open while the effect runs
+509	Rainbow\0Gradient (palette)\0Steps (palette)\0
+510	Remove colour
+511	Right-click a colour = remove
+512	Circle\0Figure eight\0Pan swing\0Tilt nod\0Triangle\0Square\0Random\0
+513	Pan size
+514	Tilt size
+515	Sync to tempo
+516	on: cycle length in beats (internal/tap, MIDI clock or Ableton Link)\noff: free frequency in Hz
+517	Cycle
+518	Frequency
+519	Spread
+520	0° = all the same, 360° = one full wave across all fixtures
+521	Order
+522	Selection order\0Left -> right\0Front -> back\0Centre -> out\0Random\0
+523	%d (every n-th the same)
+524	2 = odd/even alternating, 3 = every third fixture the same ...
+525	Mirror (from the centre)
+526	Reverse
+527	0 = only the base values (programmer / console), 1 = full effect
+528	Fade in/out
+529	%d fixtures
+530	Use selection
+531	+ Selection
+532	show
+533	Pixel fixtures (LED bars): every pixel is a separate element of the effect
+534	No matching fixtures assigned.
+535	Save as preset
+536	Preset saved: 
+537	Preset could not be saved
+538	Parameters (without fixtures) as a custom preset - appears on the left under 'Custom presets'
+539	Effects
+540	Output / Interface
+541	Stage
+543	All to 0
+544	Fixtures to home position
+545	Drag = change value, double-click = 0/255, click = select fixture
+546	  (effect: %d)
+547	%d.%03d = %d\n(free)
+548	LightStage MIDI mapping (*.lsmidi)\0*.lsmidi\0All files\0*.*\0
+549	Rescan devices
+550	Inputs: %s
+551	In use/not opened: %s
+552	Export...
+553	MIDI mapping saved: 
+554	MIDI mapping could not be saved
+555	Save all assignments as a file (.lsmidi)
+556	Import...
+557	Add (existing ones stay)
+558	Replace (delete existing ones)
+559	 MIDI assignments loaded
+560	File is not a LightStage MIDI mapping
+561	Save as default
+562	Default MIDI mapping saved (applies to new shows)
+563	New shows start with these assignments automatically.\nFixture assignments apply to the fixture numbers (IDs).
+564	Load default
+565	 default assignments loaded
+566	No default mapping saved yet
+567	Delete all
+568	Learnable targets...
+569	List of all targets (fixtures, DMX, effects, parameters), double-click = learn MIDI

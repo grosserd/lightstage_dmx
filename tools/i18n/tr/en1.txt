@@ -1,0 +1,276 @@
+0	LightStage Show (*.lightstage)\0*.lightstage\0All files\0*.*\0
+1	3D models (*.glb;*.gltf;*.fbx;*.obj)\0*.glb;*.gltf;*.fbx;*.obj\0All files\0*.*\0
+2	The show has unsaved changes. Save?
+3	Loading failed: 
+4	Show loaded: 
+5	Loaded with warning: 
+6	Saving failed: 
+7	Saved: 
+8	GDTF imported: 
+9	GDTF error: 
+10	Video on 
+11	Model imported: 
+12	Model error: 
+13	 fixture(s) duplicated
+14	 stand(s) added
+15	 fixture(s) deleted
+16	 empty stand(s) removed
+17	File
+18	New show
+19	Open...
+20	Save
+21	Save as...
+22	Load demo show
+23	Import 3D model...
+24	Create custom fixture (Fixture Editor)...
+25	Import GDTF fixture...
+26	Export Ableton manifest...
+27	Save screenshot...
+28	Exit
+29	View
+30	Fixture numbers
+31	Light beams (volumetric)
+32	Shadows
+33	Lens glow
+34	Projector lines
+35	Statistics
+36	OSC addresses...
+37	Performance mode (live)
+38	Performance settings...
+39	Demo movement (test without console)
+40	Camera: front
+41	Camera: FOH raised
+42	Camera: side
+43	Camera: top view
+44	Centre selection
+45	Help
+46	Viewport: drag left mouse = orbit, Shift/middle = pan, wheel = zoom
+47	Click = select fixture, Ctrl = multiple, double-click = centre
+48	Del = delete selection, Ctrl+A = all, Esc = clear selection
+49	MIDI Learn: switch Learn on, click a control, move a MIDI control
+50	Drag & drop files (show, GDTF, models) into the window
+51	Untitled
+52	+ Add fixture
+53	Duplicate
+54	Delete
+55	Swap fixture type (selection)...
+56	Swap fixture type...
+57	Edit fixture type...
+58	Send fixtures to Ableton (DMX device)
+59	Send fixture to Ableton (DMX device)
+60	Sent to Ableton: 
+61	 fixture(s)
+62	(type missing)
+63	Used
+64	Remove universe
+65	Art-Net port address (0 = Net 0, Sub 0, Uni 0)
+66	Ambient %.2f
+67	Ambient light (room, floor, sky) - independent of the fixtures
+68	Colour of the ambient light
+69	All fixtures: 100 %% = rated output, up to 1000 %%. Right-click: 100 %% / blackout. Ctrl+click: enter value
+70	Copy OSC address: /ls/master
+71	Exposure %.2f
+72	Camera exposure: affects the whole picture
+73	Beams
+74	See everything bright, even without fixtures (key L). Display only, DMX stays unchanged.
+75	IDs
+76	Proj. lines
+77	Outlines of the projector light cones on/off
+78	Demo movement
+79	Performance mode (F12): inputs go to DMX immediately, display throttled. Right-click: settings
+80	%d fixtures  %d lights  %d shadows  %d beams  Haze %.2f  %.1f ms
+81	LIVE   Latency %s   CPU %.1f %%   Engine %.0f Hz
+82	MIDI LEARN: click a control or channel
+83	Now move a MIDI control for: 
+84	Manifest saved: 
+85	Manifest could not be saved
+86	Performance mode ON (F12 to exit)
+87	Performance mode OFF
+88	Performance mode
+89	Performance mode active (F12)
+90	MIDI / OSC / Art-Net go to DMX immediately, independent of the display.
+91	Visualisation in performance mode
+92	Off (live panel)
+93	Preview
+94	Full
+95	Frames per second
+96	Resolution
+97	Preview: no shadows, bloom or lens glow, simpler beams.
+98	For live use: power plan \"High performance\", USB power saving off for the Enttec\n(Device Manager > USB Root Hub > Power Management), firewall permission for LightStage.
+99	In performance mode: process priority \"above normal\", input and DMX threads\nwith audio priority (MMCSS), no Windows efficiency mode.
+100	Performance mode - visualisation off  (F12 to exit, View > Performance settings)
+101	BLACKOUT\n(release)
+102	No snapshots (Snapshots tab).
+103	Click: on/off  ·  Shift+click: add (others stay on)  ·  Right-click: strength and fade
+104	Strength
+105	instant
+106	All snapshots off
+107	Groups
+108	Output
+109	%.0f packets/s   %s
+110	Latency input -> DMX
+111	no input yet
+112	no MIDI devices
+113	off (Output / Interface tab)
+114	Learned: %s Ch%d %s %d -> %s
+115	No fixture selected.
+116	Click in the viewport or in the patch list.
+117	Ctrl+click = multiple, Ctrl+A = all.
+118	Edit type
+119	Edit custom fixture in the Fixture Editor
+120	Edit as custom fixture (copy) in the Fixture Editor
+121	Swap type...
+122	Replace with another fixture - position, mounting and address stay
+123	%s (%d channels)
+124	Universe / address
+125	Address overlaps with another fixture
+126	Footprint does not fit into the universe
+127	%d fixtures selected
+128	Replace all selected fixtures with another type - positions stay
+129	Rotation (degrees)
+130	Free (fixed in space)
+131	Stand 
+132	Mounting
+133	(mixed)
+134	Moves with truss %d
+135	Stands on stand %d (height in the Stage tab)
+136	Hanging
+137	Standing
+138	Face audience
+139	Distribute evenly (X)
+140	Invert pan
+141	Invert tilt
+142	Beam angle
+143	Angle
+144	Profile
+145	Custom angle (profile: %.0f°)
+146	Angle from the fixture profile (%.0f°)
+147	Fixtures with a zoom channel control the angle via zoom.
+148	Control
+149	DMX channels
+150	Pixels (click = control individually)
+151	all
+152	Off
+153	White
+154	Target
+155	Aim moving heads at the camera pivot
+156	Colour
+157	actual: %5.1f / %5.1f
+158	Channel
+159	Value
+160	Function
+161	%s\nAttribute: %s%s
+162	 (fine)
+163	Network not available
+164	 is in use
+165	# LightStage OSC addresses, protocol 
+166	 · protocol 
+167	</p><p><a href='/manifest.json'>manifest.json</a> · <a href='/osc.txt'>osc.txt</a></p><table><tr><th>Device</th><th>Address</th><th>Subscriptions</th><th>ago</th></tr>
+168	<tr><td colspan=4>no devices connected</td></tr>
+170	Blinder 
+171	Side 
+172	Look 1 - Blue/Amber
+174	Enttec: no interface found
+175	 not available
+176	 open
+177	Art-Net input: port 6454 in use
+178	Enttec: connection lost
+179	waiting for MIDI clock
+180	Clock gone - running free
+181	Clock stopped - running free
+182	Brightness
+183	Movement
+184	Attribute
+185	Triangle
+186	Saw up
+187	Saw down
+188	Square
+189	Pulse
+190	Random
+191	Circle
+192	Figure eight
+193	Pan swing
+194	Tilt nod
+195	Square
+196	Selection order
+197	Left -> right
+198	Front -> back
+199	Centre -> out
+200	Rainbow
+201	Gradient (palette)
+202	Steps (palette)
+203	Chase soft
+204	Outside in
+205	Wave
+206	Breathe
+207	Pulse on beat
+208	Alternate
+209	Sparkle
+210	Flash chase
+211	Rainbow wave
+212	Cool gradient
+213	Fire
+214	Red / blue alternate
+215	Colour jumps
+216	Circle offset
+217	Fan
+218	Beam
+219	Zoom pulse
+220	Zoom wave
+221	Iris pulse
+222	Custom
+223	Rainbow wave, circle offset (moving heads), wave (others)
+224	Red/blue, ballyhoo, chase
+225	Cool gradient, breathe, figure eight
+226	Ballad
+227	Warm tone, breathe, pan swing
+228	Fire, sparkle
+229	Blinder
+231	Red
+232	Green
+233	Blue
+234	Warm white
+235	Cold white
+236	Yellow
+237	Focus
+238	Prism
+239	Prism rotation
+240	Fog
+241	Fan
+242	Effect
+243	Effect speed
+244	Unused
+245	Generic
+246	Wheels / effects
+247	Other
+248	Hazer / fog
+249	closed
+250	open
+251	Strobe slow -> fast
+252	Open
+253	Moving head spot (16 channels)
+254	Moving head wash (14 channels)
+255	Dimmer (1 channel)
+256	Hazer (fog + fan)
+257	 (copy)
+258	Name missing
+259	Manufacturer missing
+260	Channel without a name
+261	Duplicate channel name: 
+262	Mode \"
+263	\" has no channels
+264	\" has more than 512 channels
+265	Duplicate mode name: 
+266	Note: no dimmer or colour channel - the fixture stays dark
+268	invalid
+269	File could not be written: 
+270	New fixture
+271	Copy of \"
+272	\" - saved as a custom fixture
+273	Not saved: 
+274	Saved, but not readable: 
+275	 fixture(s) in the show updated)
+276	Custom fixture saved: 
+277	  - test fixture at the front of the stage (the Inspector controls it)
+278	General
+279	Manufacturer

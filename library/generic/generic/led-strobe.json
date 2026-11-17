@@ -1,0 +1,102 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OpenLightingProject/open-fixture-library/master/schemas/fixture.json",
+  "name": "LED Strobe",
+  "categories": [
+    "Strobe"
+  ],
+  "meta": {
+    "authors": [
+      "Grosserd LightStage"
+    ],
+    "createDate": "2026-10-12",
+    "lastModifyDate": "2026-10-12"
+  },
+  "physical": {
+    "dimensions": [
+      600,
+      140,
+      200
+    ],
+    "bulb": {
+      "type": "LED",
+      "lumens": 45000,
+      "colorTemperature": 6000
+    },
+    "lens": {
+      "degreesMinMax": [
+        90,
+        90
+      ]
+    }
+  },
+  "availableChannels": {
+    "Intensity": {
+      "capability": {
+        "type": "Intensity"
+      }
+    },
+    "Strobe Rate": {
+      "capabilities": [
+        {
+          "dmxRange": [
+            0,
+            5
+          ],
+          "type": "ShutterStrobe",
+          "shutterEffect": "Open"
+        },
+        {
+          "dmxRange": [
+            6,
+            255
+          ],
+          "type": "ShutterStrobe",
+          "shutterEffect": "Strobe",
+          "speedStart": "0.5Hz",
+          "speedEnd": "25Hz"
+        }
+      ]
+    },
+    "Effect": {
+      "capabilities": [
+        {
+          "dmxRange": [
+            0,
+            127
+          ],
+          "type": "NoFunction"
+        },
+        {
+          "dmxRange": [
+            128,
+            255
+          ],
+          "type": "ShutterStrobe",
+          "shutterEffect": "Lightning",
+          "speedStart": "1Hz",
+          "speedEnd": "15Hz",
+          "comment": "Lightning"
+        }
+      ]
+    }
+  },
+  "modes": [
+    {
+      "name": "3-channel",
+      "shortName": "3ch",
+      "channels": [
+        "Intensity",
+        "Strobe Rate",
+        "Effect"
+      ]
+    },
+    {
+      "name": "2-channel",
+      "shortName": "2ch",
+      "channels": [
+        "Intensity",
+        "Strobe Rate"
+      ]
+    }
+  ]
+}

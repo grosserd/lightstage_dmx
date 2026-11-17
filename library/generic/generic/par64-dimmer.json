@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OpenLightingProject/open-fixture-library/master/schemas/fixture.json",
+  "name": "PAR 64 (Dimmer)",
+  "categories": [
+    "Dimmer"
+  ],
+  "meta": {
+    "authors": [
+      "Grosserd LightStage"
+    ],
+    "createDate": "2026-10-12",
+    "lastModifyDate": "2026-10-12"
+  },
+  "physical": {
+    "dimensions": [
+      260,
+      380,
+      260
+    ],
+    "bulb": {
+      "type": "Halogen",
+      "lumens": 12000,
+      "colorTemperature": 3100
+    },
+    "lens": {
+      "degreesMinMax": [
+        22,
+        22
+      ]
+    }
+  },
+  "availableChannels": {
+    "Dimmer": {
+      "capability": {
+        "type": "Intensity"
+      }
+    }
+  },
+  "modes": [
+    {
+      "name": "1-channel",
+      "shortName": "1ch",
+      "channels": [
+        "Dimmer"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# build output
+obj/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.res
+LightStage*.exe
+build*.log
+build*.txt
+*.flag
+# runtime / test output
+*.log
+selftest_*
+settings.json
+autosave*.lightstage
+*.dmp
+# editor / OS
+.vs/
+*.user
+Thumbs.db
+desktop.ini

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OpenLightingProject/open-fixture-library/master/schemas/fixture.json",
+  "name": "Blinder 4-Cell",
+  "categories": [
+    "Blinder"
+  ],
+  "meta": {
+    "authors": [
+      "Grosserd LightStage"
+    ],
+    "createDate": "2026-10-12",
+    "lastModifyDate": "2026-10-12"
+  },
+  "physical": {
+    "dimensions": [
+      600,
+      300,
+      220
+    ],
+    "bulb": {
+      "type": "Halogen",
+      "lumens": 48000,
+      "colorTemperature": 3000
+    },
+    "lens": {
+      "degreesMinMax": [
+        55,
+        55
+      ]
+    }
+  },
+  "matrix": {
+    "pixelCount": [
+      2,
+      2,
+      1
+    ]
+  },
+  "availableChannels": {
+    "Master": {
+      "capability": {
+        "type": "Intensity"
+      }
+    }
+  },
+  "templateChannels": {
+    "Cell $pixelKey": {
+      "capability": {
+        "type": "Intensity"
+      }
+    }
+  },
+  "modes": [
+    {
+      "name": "4-channel",
+      "shortName": "4ch",
+      "channels": [
+        {
+          "insert": "matrixChannels",
+          "repeatFor": "eachPixelABC",
+          "channelOrder": "perPixel",
+          "templateChannels": [
+            "Cell $pixelKey"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1-channel",
+      "shortName": "1ch",
+      "channels": [
+        "Master"
+      ]
+    }
+  ]
+}

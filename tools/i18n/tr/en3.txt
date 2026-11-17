@@ -1,0 +1,267 @@
+570	Ableton: route a MIDI track to a virtual port (e.g. loopMIDI / LoopBe1); it is opened here automatically. Assignments are saved with the show.
+571	Device
+572	No
+573	Tgl
+574	(all)
+575	Master: 1.00 = 100 %%, up to 10.00 = 1000 %%
+576	No assignments yet.
+577	MIDI Learn on, click a control in the Inspector, move the controller.
+578	Send Art-Net
+579	Target IP
+580	Network adapter (bind IP)
+581	Receive Art-Net (visualise a console / Resolume / software)
+582	Enable reception per universe in the patch list with 'In'. LTP merge with local controls.
+583	Sent: %llu packets   Received: %llu
+584	Input active
+585	Receive OSC
+586	Listening on port %d   Messages: %llu
+587	starting...
+588	Last: %s
+589	/ls/dmx/<universe>/<channel> 0..1 or 0..255   /ls/master   /ls/haze   /ls/snapshot <no>
+590	Output via Enttec
+591	Detect automatically
+592	Refresh ports
+593	Find interface
+594	No Enttec USB Pro found (USB connected? FTDI VCP driver?)
+595	Found on 
+596	connected, 
+597	The interface outputs one universe (label 6, 512 channels, approx. 40 Hz).
+598	Ableton bridge active
+599	OSC port %d (above), manifest: http://<this computer>:%d/manifest.json
+600	HTTP running on port %d   Manifest rev %u
+601	No Ableton devices connected.
+602	%s   Subscriptions: %s   %.1f s ago
+603	In Ableton, drag the device \"LightStage Control\" onto a track - it connects automatically.
+604	Device assignments (%d, %d connected)...
+605	All assignments of the Ableton devices that LightStage saves with the show
+606	Tip: set the tempo to Ableton Link (Effects tab)
+607	Export manifest...
+608	Open in browser
+609	 knob 
+610	  (device not connected: arrives on connect)
+611	Ableton knob
+612	No Control assignment yet: load LightStage Control in Ableton and connect
+613	New assignment (
+614	  (not connected)
+615	Next free knob
+616	Next free button
+617	Knob %d   %s##k%d
+618	Remove assignment
+619	No assignments yet. Load a LightStage device in Ableton - it creates its assignment here when it connects.
+620	Assignments of the Ableton devices
+621	LightStage saves all device assignments with the show; a device fetches its assignment when it connects.\nAssign Control knobs: right-click a parameter, fixture attribute or DMX channel > Ableton knob.
+622	connected
+623	not connected
+624	(no device)
+625	   knobs changed here
+626	Delete assignment
+627	%s (missing in the show)
+628	Knobs and buttons
+629	Knob
+630	Target 
+631	%s (%s): no assignment yet - refresh the device or press Connect there
+632	Ableton assignments
+633	Learnable targets
+634	Double-click a target = learn MIDI. Same list as in the Ableton manifest.
+635	Search (name, category, address)
+636	%d of %d targets
+637	Category
+638	OSC address
+639	Learn MIDI: 
+640	Stage & atmosphere
+641	Floor
+642	Width (m)
+643	Depth (m)
+644	Wall height (m)
+645	Wall colour
+646	Ambient
+647	Ambient x
+648	Brightness of the surroundings (room, floor, sky) - independent of the fixtures
+649	Ambient colour
+650	Night
+651	Place & mood
+652	Mood
+653	(choose a preset)
+654	Place
+655	Hall\0Outdoor\0
+656	Ground
+657	Hall floor\0Grass\0Concrete\0Asphalt\0Soil / gravel\0Wooden floor\0
+658	Ground size (m)
+659	Sky top
+660	Horizon
+661	Moon direction / height
+662	Haze in the distance
+663	Camera
+664	Trusses
+665	Start (x,y,z) / end (x,y,z) / size in metres
+666	+ Stand
+667	Height of the stand (top) above the floor
+668	Rotation
+669	Width of the T-bar (0 = one fixture directly on top)
+670	Stands on the deck instead of the hall floor
+671	%d fixture%s
+672	Put fixtures on a stand via Inspector > Mounting.
+673	3D models
+674	+ Import...
+675	3D models (*.glb;*.gltf;*.fbx;*.obj)\0*.glb;*.gltf;*.fbx;*.obj\0
+676	(not loaded)
+677	Scale
+678	Materials
+679	Use colours and textures from the file (off = one uniform colour)
+680	%d texture%s
+681	Reload
+682	Read the file and textures from disk again (e.g. after a new export)
+683	Texture missing: %s
+684	The file refers to Cinema 4D assets (asset:///...) that were not exported.\nIn C4D: File > Save Project with Assets (puts the textures into a tex folder),\nthen export from there, or put the images next to the model and click 'Reload'.
+685	The image file is not next to the model or in a subfolder (tex, textures, maps ...).\nCopy the image there and click 'Reload'.
+686	Import glTF/GLB, FBX or OBJ\n(or drag it into the window).
+687	Save snapshot (all %d fixtures)
+688	Save snapshot (%d fixture%s)
+689	 fixtures, 
+690	 effects
+691	Saves the selected fixtures (list on the left or view).\nWithout a selection: all fixtures.\n%s
+692	Also save effects: which are on and which are off.\nWhile the snapshot is on, they are switched that way; afterwards their own switch applies again.
+693	Projectors
+694	Also save projector settings (on/off, brightness, position, aim, zoom, shift, blur)
+695	All off
+696	Several snapshots run at the same time. Same fixtures: the last one started wins and ends the older one - with Shift+click the older one stays on.
+697	No snapshots yet. Select fixtures, set them up, then \"Save snapshot\".
+698	Contents
+699	Start / stop (fade %.1f s).\nShift+click: add, other snapshots with the same fixtures stay on.\nMIDI Learn: a note toggles.
+700	Strength %.0f %%
+701	Fade in and out time
+702	 off
+703	%d fixture%s%s%s
+704	Fixtures of \"
+705	\" selected
+706	Click: select fixtures\nFixtures: %s\nEffects on: %s\nEffects off: %s
+707	(not saved)
+708	Record again (same fixtures)
+709	Snapshot recorded again: 
+710	Record again with selection (
+711	Effects in the snapshot
+712	on = runs with the snapshot, off = is switched off, - = untouched
+713	Save effects too
+714	Save projectors too
+715	(applies on the next re-record)
+716	Load into the programmer
+717	Writes the values permanently into the base values (like the old \"Recall\")
+718	Move up
+719	+ Group from selection (%d)
+720	+ Colour group from selection (
+721	select fixtures first
+722	One control sets the same attribute (or a colour) on all fixtures of the group. Right-click a control: OSC address / learn MIDI.
+723	Hue %.0f
+724	Saturation %.0f %%
+725	Brightness %.0f %%
+726	Click: select fixtures\n%s
+727	Fixtures = selection (
+728	Add selection
+729	Remove selection
+730	Apply value now
+731	Swap fixture type: %d fixture%s - position, rotation, mounting and address are kept.
+732	Search (e.g. 'martin aura', 'moving head', 'par')
+733	All manufacturers
+734	Import GDTF...
+735	Beam angle %.0f-%.0f degrees   %.0f lm   %.0f K
+736	Pan %.0f degrees   Tilt %.0f degrees
+737	%s (%d channels)##%d
+738	Re-address on address conflict
+739	If the new type is larger and overlaps the next fixture, it gets the next free address
+740	%d fixture%s would%s overlap with the address (%d channels).
+741	Addresses fit (%d channels).
+742	Count
+743	Automatic address
+744	from %d
+745	(universe full, the next one is used)
+746	Hang on truss\0Floor at the back (pointing up)\0Floor line at the front\0At the camera pivot\0On a stand\0
+747	Placement
+748	No truss available (Stage tab)
+749	New stand per fixture
+750	Stand
+751	 fixture)
+752	 fixtures)
+753	Every fixture gets its own stand (Stage tab).
+754	All new fixtures go on this stand (T-bar).
+755	Spacing (m)
+756	Select a fixture on the left.
+757	Swap
+758	 fixture(s) swapped for 
+759	Add
+760	 added
+761	Close
+762	New custom fixture...
+763	Edit fixture...
+764	Edit as custom fixture...
+765	Delete custom fixture...
+766	Delete fixture?
+767	Permanently delete \"%s\" (%s) from the library?
+768	Used by %d fixture%s in this show - delete or swap them first.
+769	Custom fixture deleted: 
+770	Not deleted: 
+771	Cancel
+772	16:9\016:10\04:3\021:9\01:1\0like input\0
+773	+ Projector
+774	At most 8 projectors are lit
+775	Test card
+776	No projector yet.
+777	Show lines
+778	Screens
+779	+ Screen
+780	No screen yet.
+781	Select a projector or a screen on the left, or create a new one with +.
+782	Projectors throw their picture as light into the room: onto screens, the stage, walls, models and into the haze.
+783	Video files can also be dragged into the window.
+784	Input
+785	Source
+786	Test card\0Video file\0NDI\0
+787	Choose file...
+788	Videos (*.mp4;*.mov;*.m4v;*.wmv;*.avi;*.mkv)\0*.mp4;*.mov;*.m4v;*.wmv;*.avi;*.mkv\0All files\0*.*\0
+789	Loop
+790	(no file)
+791	NDI runtime not found.\nInstall NDI Tools (ndi.video/tools).
+792	NDI source
+793	(choose)
+794	searching the network ...
+795	%d source(s) found
+796	Optics
+797	Zoom (throw ratio)
+798	Distance / picture width. Small = wide angle (large picture), large = tele
+799	Picture at %.1f m distance: %.2f x %.2f m  (opening %.0f°)
+800	Brightness (lumen)
+801	Residual light on a black picture (projector contrast)
+802	Rear projection (mirror)
+803	Show outlines
+804	Lines from the lens to the picture corners. All projectors: View > Projector lines
+805	Hanging upside down (picture is rotated too)
+806	Align to screen
+807	No screen available.
+808	Aim + adjust zoom
+809	Stays in place, turns towards the screen and zooms so the picture fits on it
+810	Place frontally in front
+811	Puts the projector straight in front of the screen, distance from the zoom (fills the screen)
+812	Size
+813	16:9\016:10\04:3\021:9\01:1\0free\0
+814	free = width and height adjustable independently
+815	Height (m)
+816	Diagonal %.0f\"  (%.2f m)
+817	Screen reflectivity: 1.0 = matt white, < 1 grey, > 1 high gain
+818	Black frame
+819	Bottom edge (m)
+820	Height of the bottom picture edge above the hall floor
+821	on floor/stage
+822	Tilt
+823	Rigging
+824	Floor stand\0Hanging (cables)\0None\0
+825	Test card 960 x 540
+826	opening 
+827	File not readable: 
+828	No video, or codec not supported (H.264/HEVC/MPEG-4/WMV work; HAP/DXV/ProRes do not)
+829	Read error in 
+830	  (end)
+835	connecting to 
+836	NDI runtime not found (install NDI Tools)
+837	NDI receiver could not be created
+838	waiting for 
+839	no more frames from 
+840	no source selected

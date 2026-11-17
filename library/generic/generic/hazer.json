@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OpenLightingProject/open-fixture-library/master/schemas/fixture.json",
+  "name": "Hazer",
+  "categories": [
+    "Hazer",
+    "Smoke"
+  ],
+  "meta": {
+    "authors": [
+      "Grosserd LightStage"
+    ],
+    "createDate": "2026-10-12",
+    "lastModifyDate": "2026-10-12"
+  },
+  "physical": {
+    "dimensions": [
+      480,
+      300,
+      280
+    ]
+  },
+  "availableChannels": {
+    "Haze Output": {
+      "capability": {
+        "type": "Fog",
+        "fogType": "Haze",
+        "fogOutputStart": "0%",
+        "fogOutputEnd": "100%"
+      }
+    },
+    "Fan": {
+      "capability": {
+        "type": "Generic",
+        "comment": "Fan speed"
+      }
+    }
+  },
+  "modes": [
+    {
+      "name": "2-channel",
+      "shortName": "2ch",
+      "channels": [
+        "Haze Output",
+        "Fan"
+      ]
+    }
+  ]
+}
