@@ -9,6 +9,11 @@
 cmake_minimum_required( VERSION 3.26 )
 project( LightStage VERSION 2.1 LANGUAGES C CXX )
 if( APPLE )
+	#GLFW's Cocoa sources (.m) need Objective-C, the LightStage macOS backends (.mm) Objective-C++
+	enable_language( OBJC )
+	enable_language( OBJCXX )
+endif()
+if( APPLE )
 	enable_language( OBJCXX )#media backends (video_mac.mm, audio_mac.mm, image_mac.mm)
 endif()
 
