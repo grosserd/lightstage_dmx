@@ -3,8 +3,8 @@
 // and -1 (POSIX) after the cast, so the existing storage stays as it is.
 // Also: network interface list and a small auto-reset wake event (used by the I/O threads).
 #pragma once
-#ifdef _WIN32
 #include "platform.h"
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else

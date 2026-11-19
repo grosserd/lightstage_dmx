@@ -6,8 +6,10 @@
 #include "platform.h"
 #include "../third_party/stb_image_write.h"
 #include "netsock.h"
+#ifdef _WIN32
 #include <windows.h>
-#include <mmsystem.h>
+#endif
+#include <filesystem>
 
 #include <algorithm>
 #include <set>
@@ -63,7 +65,7 @@ static bool SavePng( App& app, const std::string& path, int w, int h, float* avg
 
 int RunSelfTest( App& app, const std::string& dir )
 {
-	std::string logPath = dir + "\\selftest.log";
+	std::string logPath = dir + LS_SEP "selftest.log";
 	g_out               = fopen( logPath.c_str(), "w" );
 	if( !g_out ) return 2;
 	fprintf( g_out, "LightStage self test\n====================\n" );
@@ -212,7 +214,7 @@ int RunSelfTest( App& app, const std::string& dir )
 
 	//---- show file roundtrip
 	{
-		std::string p = dir + "\\selftest_show.lightstage";
+		std::string p = dir + LS_SEP "selftest_show.lightstage";
 		std::string err;
 		bool ok = s.Save( p, &err );
 		Show s2;
@@ -221,7 +223,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		for( size_t i = 0; same && i < s.dmx.size(); ++i ) same = s.dmx[ i ] == s2.dmx[ i ];
 		for( size_t i = 0; same && i < s.fixtures.size(); ++i ) same = s.fixtures[ i ].address == s2.fixtures[ i ].address && s.fixtures[ i ].def == s2.fixtures[ i ].def && s.fixtures[ i ].mode == s2.fixtures[ i ].mode;
 		T( same, "Show speichern/laden identisch (%s)", err.c_str() );
-		DeleteFileA( p.c_str() );
+		RemoveFile( p );
 	}
 
 	//---- mounting: lamps follow their truss / stand, free lamps stay, file round trip
@@ -278,7 +280,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			s.UpdateMounts();
 			T( fabsf( pr->pos.x - 4.3f ) < 1e-3f && pr->mount == MountType::Stand, "Lampe verschoben, dann Stativ verschoben -> x %.2f (erwartet 4.30)", pr->pos.x );
 			pr->beam = 33;
-			std::string p = dir + "\\selftest_mount.lightstage", err;
+			std::string p = dir + LS_SEP "selftest_mount.lightstage", err;
 			bool ok = s.Save( p, &err );
 			Show s2;
 			ok = ok && s2.Load( p, app.lib, &err );
@@ -287,7 +289,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			if( ok && q ) s2.UpdateMounts();
 			T( ok && q && q->mount == MountType::Stand && q->mountIdx == si && fabsf( q->beam - 33 ) < 0.01f && s2.stands.size() == s.stands.size() && Len( q->pos - pr->pos ) < 1e-3f,
 			   "Befestigung, Stative und Abstrahlwinkel in der Show-Datei gespeichert %s", err.c_str() );
-			DeleteFileA( p.c_str() );
+			RemoveFile( p );
 			V3 before = pr->pos;
 			s.RemoveStand( si );
 			s.UpdateMounts();
@@ -361,8 +363,8 @@ int RunSelfTest( App& app, const std::string& dir )
 
 	//---- textured models (glTF with PNG, OBJ with map_Kd)
 	{
-		std::string td = dir + "\\selftest_tex";
-		CreateDirectoryA( td.c_str(), nullptr );
+		std::string td = dir + LS_SEP "selftest_tex";
+		MakeDir( td );
 		uint8_t img[ 8 * 8 * 4 ];
 		for( int y = 0; y < 8; ++y )
 			for( int x = 0; x < 8; ++x )
@@ -374,7 +376,7 @@ int RunSelfTest( App& app, const std::string& dir )
 				q[ 2 ]     = top ? 20 : 230;
 				q[ 3 ]     = 255;
 			}
-		stbi_write_png( ( td + "\\tex.png" ).c_str(), 8, 8, 4, img, 32 );
+		stbi_write_png( ( td + LS_SEP "tex.png" ).c_str(), 8, 8, 4, img, 32 );
 		//quad 2 x 2 m facing +Z, bottom edge on y = 0
 		float pos[ 12 ] = { -1, 0, 0, 1, 0, 0, 1, 2, 0, -1, 2, 0 }, nrm[ 12 ] = { 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1 }, uv[ 8 ] = { 0, 1, 1, 1, 1, 0, 0, 0 };
 		uint16_t ix[ 6 ] = { 0, 1, 2, 0, 2, 3 };
@@ -384,9 +386,9 @@ int RunSelfTest( App& app, const std::string& dir )
 		put( nrm, 48 );
 		put( uv, 32 );
 		put( ix, 12 );
-		FILE* fb = fopen( ( td + "\\quad.bin" ).c_str(), "wb" );
+		FILE* fb = fopen( ( td + LS_SEP "quad.bin" ).c_str(), "wb" );
 		if( fb ) { fwrite( bin.data(), 1, bin.size(), fb ); fclose( fb ); }
-		WriteText( td + "\\quad.gltf", R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
+		WriteText( td + LS_SEP "quad.gltf", R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
 "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],
 "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0},"metallicFactor":0}}],
 "textures":[{"source":0}],"images":[{"uri":"tex.png"}],
@@ -394,8 +396,8 @@ int RunSelfTest( App& app, const std::string& dir )
 "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":48},{"buffer":0,"byteOffset":48,"byteLength":48},{"buffer":0,"byteOffset":96,"byteLength":32},{"buffer":0,"byteOffset":128,"byteLength":12}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3","min":[-1,0,0],"max":[1,2,0]},{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"},
 {"bufferView":2,"componentType":5126,"count":4,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":6,"type":"SCALAR"}]})" );
-		WriteText( td + "\\quad.mtl", "newmtl m\nKd 0.8 0.8 0.8\nmap_Kd tex.png\n" );
-		WriteText( td + "\\quad.obj", "mtllib quad.mtl\nv -1 0 0\nv 1 0 0\nv 1 2 0\nv -1 2 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nusemtl m\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n" );
+		WriteText( td + LS_SEP "quad.mtl", "newmtl m\nKd 0.8 0.8 0.8\nmap_Kd tex.png\n" );
+		WriteText( td + LS_SEP "quad.obj", "mtllib quad.mtl\nv -1 0 0\nv 1 0 0\nv 1 2 0\nv -1 2 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nusemtl m\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n" );
 		auto topT = []( const MeshData& m ) {//texture t of the highest vertex (expected 0 = first image row = red)
 			float best = -1e9f, t = -1;
 			for( uint32_t k = 0; k < m.Count(); ++k )
@@ -404,13 +406,13 @@ int RunSelfTest( App& app, const std::string& dir )
 		};
 		MeshData g, o;
 		std::string e1, e2;
-		bool okG = LoadModel( td + "\\quad.gltf", g, &e1 );
-		bool okO = LoadModel( td + "\\quad.obj", o, &e2 );
+		bool okG = LoadModel( td + LS_SEP "quad.gltf", g, &e1 );
+		bool okO = LoadModel( td + LS_SEP "quad.obj", o, &e2 );
 		T( okG && g.images.size() == 1 && g.Textured() == 1 && g.images[ 0 ].w == 8 && fabsf( topT( g ) ) < 1e-4f, "glTF mit PNG-Textur: %d Bild(er), %d texturierte Teile, oben t=%.2f %s", (int)g.images.size(), g.Textured(), topT( g ), e1.c_str() );
 		T( okO && o.images.size() == 1 && o.Textured() == 1 && fabsf( topT( o ) ) < 1e-4f, "OBJ mit map_Kd-Textur: %d Bild(er), oben t=%.2f %s", (int)o.images.size(), topT( o ), e2.c_str() );
 		//rendered: the upper half of the quad shows red, the lower half blue
 		ModelObj mo;
-		mo.path  = td + "\\quad.gltf";
+		mo.path  = td + LS_SEP "quad.gltf";
 		mo.name  = "quad";
 		mo.pos   = V3( 0, 1.2f, 6.0f );
 		mo.scale = 1.0f;
@@ -425,7 +427,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		app.cam.pitch   = 0;
 		app.cam.dist    = 4;
 		app.cam.fov     = 50;
-		SavePng( app, dir + "\\selftest_textured.png", 640, 360 );
+		SavePng( app, dir + LS_SEP "selftest_textured.png", 640, 360 );
 		std::vector< uint8_t > px;
 		int W = 0, H = 0;
 		app.ren.ReadOutput( px, W, H );
@@ -513,12 +515,12 @@ int RunSelfTest( App& app, const std::string& dir )
 		};
 		s.projectors[ pi ].on = false;
 		s.stage.beams         = false;//colour checks without haze in front of the screen
-		SavePng( app, dir + "\\selftest_projector_off.png", 960, 540 );
+		SavePng( app, dir + LS_SEP "selftest_projector_off.png", 960, 540 );
 		int r0, g0, b0;
 		pixelAt( sg.centre + sg.up * 0.6f, r0, g0, b0 );
 		s.projectors[ pi ].on = true;
 		app.RenderViewport( 960, 540 );//first frame of the test card
-		SavePng( app, dir + "\\selftest_projector_nohaze.png", 1280, 720 );
+		SavePng( app, dir + LS_SEP "selftest_projector_nohaze.png", 1280, 720 );
 		int r1, g1, b1, rr, rg, rb, gr, gg, gbb;
 		pixelAt( sg.centre + sg.up * 0.6f, r1, g1, b1 );
 		pixelAt( picPoint( 0.04f, 0.92f ), rr, rg, rb );//red marker top left
@@ -547,7 +549,7 @@ int RunSelfTest( App& app, const std::string& dir )
 					}
 				return stbi_write_png( p.c_str(), w, h, 3, im.data(), w * 3 ) != 0;
 			};
-			const std::string ring = dir + "\\selftest_ring.png", wide = dir + "\\selftest_ring_wide.png";
+			const std::string ring = dir + LS_SEP "selftest_ring.png", wide = dir + LS_SEP "selftest_ring_wide.png";
 			ringPng( ring, 400, 400 );
 			ringPng( wide, 600, 400 );
 			std::string err, warn;
@@ -587,12 +589,12 @@ int RunSelfTest( App& app, const std::string& dir )
 			app.RenderViewport( 960, 540 );
 			pixelAt( sg.centre, hr, hg, hb );
 			pixelAt( ringPt, q2r, q2g, q2b );
-			SavePng( app, dir + "\\selftest_screen_shape.png", 1280, 720 );
+			SavePng( app, dir + LS_SEP "selftest_screen_shape.png", 1280, 720 );
 			const int full = fr + fg2 + fb, hole = hr + hg + hb, ringF = qr + qg + qb, ringS = q2r + q2g + q2b;
 			T( full > hole + 90 && ringS > hole + 90 && abs( ringS - ringF ) < std::max( 40, ringF / 5 ), "Geformte Leinwand gerendert: Loch %d (voll %d), Ring %d (voll %d)", hole, full, ringS, ringF );
 			//saved with the show
 			{
-				const std::string p = dir + "\\selftest_shape.lightstage";
+				const std::string p = dir + LS_SEP "selftest_shape.lightstage";
 				std::string e2;
 				T( s.Save( p, &e2 ), "Show mit geformter Leinwand gespeichert" );
 				Show back;
@@ -607,7 +609,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			s.stage.backWall = bw;
 		}
 		s.stage.beams           = true;
-		SavePng( app, dir + "\\selftest_projector.png", 1280, 720 );
+		SavePng( app, dir + LS_SEP "selftest_projector.png", 1280, 720 );
 		//seen from the side: picture on the screen and the light cone in the haze
 		{
 			Camera c = app.cam;
@@ -615,7 +617,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			app.cam.pitch = 8;
 			app.cam.dist  = 17;
 			app.cam.target = V3( 0, 2.5f, 2.0f );
-			SavePng( app, dir + "\\selftest_projector_side.png", 1280, 720 );
+			SavePng( app, dir + LS_SEP "selftest_projector_side.png", 1280, 720 );
 			app.cam = c;
 		}
 		//several frames with haze in between: the screen must stay lit (instanced geometry intact)
@@ -627,7 +629,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.stage.beams = true;
 		T( r2 + g2 + b2 > r0 + g0 + b0 + 60, "Leinwand bleibt nach mehreren Frames mit Haze beleuchtet (%d)", r2 + g2 + b2 );
 		//video file through Media Foundation
-		std::string vp = dir + "\\selftest_video";
+		std::string vp = dir + LS_SEP "selftest_video";
 		bool wrote     = WriteTestVideo( vp, 320, 240, 60 );
 		T( wrote, "Testvideo geschrieben: %s", FileName( vp ).c_str() );
 		if( wrote )
@@ -640,7 +642,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			{
 				app.video.Sync( s.projectors );
 				f = app.video.Frame( s.projectors[ pi ].uid );
-				if( !f ) Sleep( 20 );
+				if( !f ) SleepMs( 20 );
 			}
 			bool topRed = false, botBlue = false;
 			if( f && f->w == 320 && f->h == 240 )
@@ -656,11 +658,11 @@ int RunSelfTest( App& app, const std::string& dir )
 			for( int k = 0; k < 40; ++k )
 			{
 				app.video.Sync( s.projectors );
-				Sleep( 15 );
+				SleepMs( 15 );
 			}
 			f = app.video.Frame( s.projectors[ pi ].uid );
 			T( f && f->serial > s0 + 5, "Video läuft (%llu neue Bilder in 0.6 s)", f ? (unsigned long long)( f->serial - s0 ) : 0ULL );
-			SavePng( app, dir + "\\selftest_projector_video.png", 1280, 720 );
+			SavePng( app, dir + LS_SEP "selftest_projector_video.png", 1280, 720 );
 		}
 		//NDI loopback (needs an installed NDI runtime)
 		std::string where;
@@ -675,7 +677,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			{
 				for( auto& n : NdiSources() )
 					if( n == snd.fullName || n.find( "LightStage Selftest" ) != std::string::npos ) found = n;
-				if( found.empty() ) Sleep( 100 );
+				if( found.empty() ) SleepMs( 100 );
 			}
 			T( st && !found.empty(), "NDI: Testsender im Netzwerk gefunden (%s)", found.c_str() );
 			if( !found.empty() )
@@ -687,10 +689,10 @@ int RunSelfTest( App& app, const std::string& dir )
 				{
 					app.video.Sync( s.projectors );
 					f = app.video.Frame( s.projectors[ pi ].uid );
-					if( !f ) Sleep( 20 );
+					if( !f ) SleepMs( 20 );
 				}
 				T( f && f->w == 320 && f->h == 180 && f->avg.y > f->avg.x * 2 && f->avg.y > f->avg.z * 2, "NDI-Empfang: %d x %d, grün (%.2f %.2f %.2f)", f ? f->w : 0, f ? f->h : 0, f ? f->avg.x : 0.f, f ? f->avg.y : 0.f, f ? f->avg.z : 0.f );
-				SavePng( app, dir + "\\selftest_projector_ndi.png", 960, 540 );
+				SavePng( app, dir + LS_SEP "selftest_projector_ndi.png", 960, 540 );
 			}
 			s.projectors[ pi ].input = VideoInput::TestCard;
 			app.video.Sync( s.projectors );
@@ -703,14 +705,14 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.projectors[ pi ].ndi        = "HOST (Kamera 1)";
 		s.screens[ si ].width         = 7.5f;
 		s.screens[ si ].mount         = 1;
-		std::string p = dir + "\\selftest_video.lightstage", err;
+		std::string p = dir + LS_SEP "selftest_video.lightstage", err;
 		bool ok       = s.Save( p, &err );
 		Show s2;
 		ok = ok && s2.Load( p, app.lib, &err );
 		T( ok && s2.projectors.size() == s.projectors.size() && s2.screens.size() == s.screens.size() && fabsf( s2.projectors.back().throwRatio - 2.345f ) < 1e-4f && s2.projectors.back().ndi == "HOST (Kamera 1)" &&
 		       fabsf( s2.screens.back().width - 7.5f ) < 1e-4f && s2.screens.back().mount == 1,
 		   "Projektoren und Leinwände in der Show-Datei gespeichert %s", err.c_str() );
-		DeleteFileA( p.c_str() );
+		RemoveFile( p );
 		s.projectors.resize( np0 );
 		s.screens.resize( ns0 );
 		app.video.Sync( s.projectors );
@@ -730,11 +732,11 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.master = 1;
 		Run( app, 0.5f );
 		float i1 = sp->st.intensity, h1 = 0, h4 = 0;
-		SavePng( app, dir + "\\selftest_master100.png", 640, 360, &h1 );
+		SavePng( app, dir + LS_SEP "selftest_master100.png", 640, 360, &h1 );
 		s.master = 4;
 		Run( app, 0.5f );
 		float i4 = sp->st.intensity;
-		SavePng( app, dir + "\\selftest_master400.png", 640, 360, &h4 );
+		SavePng( app, dir + LS_SEP "selftest_master400.png", 640, 360, &h4 );
 		T( h4 > h1 * 1.3f && fabsf( i4 - i1 ) < 1e-3f, "Master 400 %%: Bild %.1f -> %.1f, Lampen-Intensität bleibt %.2f (Leistung statt Dimmer)", h1, h4, i4 );
 		s.master = 0.5f;
 		Run( app, 0.5f );
@@ -743,12 +745,12 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.stage.envLight = 0;
 		Run( app, 0.5f );
 		float e0 = 0, e3 = 0;
-		SavePng( app, dir + "\\selftest_env0.png", 640, 360, &e0 );
+		SavePng( app, dir + LS_SEP "selftest_env0.png", 640, 360, &e0 );
 		s.stage.envLight = 3;
-		SavePng( app, dir + "\\selftest_env3.png", 640, 360, &e3 );
+		SavePng( app, dir + LS_SEP "selftest_env3.png", 640, 360, &e3 );
 		T( e0 < 3.0f && e3 > e0 + 1.5f, "Umgebung unabhängig vom Master: 0 -> %.1f, 3 -> %.1f", e0, e3 );
 		s.stage.ambientColor = V3( 0.3f, 0.4f, 0.9f );
-		SavePng( app, dir + "\\selftest_env_blue.png", 640, 360 );
+		SavePng( app, dir + LS_SEP "selftest_env_blue.png", 640, 360 );
 		std::vector< uint8_t > px;
 		int W = 0, H = 0;
 		app.ren.ReadOutput( px, W, H );
@@ -757,12 +759,12 @@ int RunSelfTest( App& app, const std::string& dir )
 			for( int x = 0; x < W; ++x ) { rs += px[ ( (size_t)y * W + x ) * 4 ]; bs += px[ ( (size_t)y * W + x ) * 4 + 2 ]; }
 		T( bs > rs * 1.3, "Umgebungsfarbe Nachtblau: Boden blau (R %ld / B %ld)", rs, bs );
 		s.master = 7.5f;
-		std::string p = dir + "\\selftest_env.lightstage", err;
+		std::string p = dir + LS_SEP "selftest_env.lightstage", err;
 		bool ok = s.Save( p, &err );
 		Show s2;
 		ok = ok && s2.Load( p, app.lib, &err );
 		T( ok && fabsf( s2.master - 7.5f ) < 1e-4f && fabsf( s2.stage.envLight - 3 ) < 1e-4f && fabsf( s2.stage.ambientColor.z - 0.9f ) < 1e-4f, "Master 750 %%, Umgebung und Farbe gespeichert %s", err.c_str() );
-		DeleteFileA( p.c_str() );
+		RemoveFile( p );
 		OscMsg om;
 		om.address = "/ls/master/boost";
 		om.f       = { 6.0f };
@@ -781,7 +783,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		const float m0     = s.master;
 		const Camera cam0  = app.cam;
 		float hRef = 0;
-		SavePng( app, dir + "\\selftest_hall_ref.png", 640, 360, &hRef );
+		SavePng( app, dir + LS_SEP "selftest_hall_ref.png", 640, 360, &hRef );
 		auto region = [ & ]( int y0, int y1, double& r, double& g, double& b ) {
 			std::vector< uint8_t > px;
 			int W = 0, H = 0;
@@ -807,7 +809,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		app.cam.target = V3( 0, 9, 0 );
 		app.cam.pitch  = -6;
 		app.cam.dist   = 18;
-		SavePng( app, dir + "\\selftest_outdoor_sky.png", 960, 540 );
+		SavePng( app, dir + LS_SEP "selftest_outdoor_sky.png", 960, 540 );
 		double r, g, b;
 		region( 0, 30, r, g, b );
 		std::vector< uint8_t > px;
@@ -829,11 +831,11 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.stage.distanceFog = 0;
 		s.stage.moon        = 0;
 		s.stage.ground      = 1;
-		SavePng( app, dir + "\\selftest_outdoor_grass.png", 960, 540 );
+		SavePng( app, dir + LS_SEP "selftest_outdoor_grass.png", 960, 540 );
 		region( 88, 100, r, g, b );
 		T( g > r * 1.25 && g > b * 1.25, "Untergrund Rasen: grün (R %.1f G %.1f B %.1f)", r, g, b );
 		s.stage.ground = 2;
-		SavePng( app, dir + "\\selftest_outdoor_concrete.png", 960, 540 );
+		SavePng( app, dir + LS_SEP "selftest_outdoor_concrete.png", 960, 540 );
 		region( 88, 100, r, g, b );
 		T( fabs( r - b ) < std::max( 3.0, g * 0.15 ) && g > 5, "Untergrund Beton: neutral grau (R %.1f G %.1f B %.1f)", r, g, b );
 		//moon shadow adds one shadow map
@@ -847,7 +849,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		T( app.ren.stats.shadows == sh0 + 1, "Mondschatten optional: Schatten-Maps %d -> %d", sh0, app.ren.stats.shadows );
 		s.master = 1;
 		Run( app, 0.5f );
-		SavePng( app, dir + "\\selftest_outdoor_night.png", 1280, 720 );
+		SavePng( app, dir + LS_SEP "selftest_outdoor_night.png", 1280, 720 );
 		//hall preset again: same picture as before
 		s.stage = st0;
 		ApplyMood( s.stage, 0 );
@@ -855,19 +857,19 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.master       = m0;
 		Run( app, 0.5f );
 		float hHall = 0;
-		SavePng( app, dir + "\\selftest_hall_again.png", 640, 360, &hHall );
+		SavePng( app, dir + LS_SEP "selftest_hall_again.png", 640, 360, &hHall );
 		T( s.stage.environment == 0 && fabsf( hHall - hRef ) < hRef * 0.1f + 1.0f, "Halle-Preset: Bild wie vorher (%.1f / %.1f)", hHall, hRef );
 		//save / load
 		ApplyMood( s.stage, 3 );
 		s.stage.moonShadow = true;
 		s.stage.moonAz     = 77;
-		std::string p = dir + "\\selftest_outdoor.lightstage", err;
+		std::string p = dir + LS_SEP "selftest_outdoor.lightstage", err;
 		bool ok = s.Save( p, &err );
 		Show s2;
 		ok = ok && s2.Load( p, app.lib, &err );
 		T( ok && s2.stage.environment == 1 && s2.stage.ground == 3 && s2.stage.moonShadow && fabsf( s2.stage.moonAz - 77 ) < 1e-3f && fabsf( s2.stage.distanceFog - 0.5f ) < 1e-4f,
 		   "Outdoor-Einstellungen gespeichert %s", err.c_str() );
-		DeleteFileA( p.c_str() );
+		RemoveFile( p );
 		s.stage = st0;
 		s.master = m0;
 		app.cam  = cam0;
@@ -894,7 +896,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			if( DmxFrame* fr = s.Frame( 1 ) ) ( *fr )[ 479 ] = 0;
 		}
 		app.StartEngine();
-		Sleep( 1300 );//let the 1 Hz refresh pass
+		SleepMs( 1300 );//let the 1 Hz refresh pass
 		app.io.ClearLatency();
 		const uint64_t sent0 = app.io.artnetSent;
 		double t0 = Now(), tApplied = -1, tSent = -1;
@@ -912,11 +914,11 @@ int RunSelfTest( App& app, const std::string& dir )
 				if( fr && ( *fr )[ 479 ] > 150 ) tApplied = Now();
 			}
 			if( tSent < 0 && app.io.artnetSent > sent0 ) tSent = Now();
-			Sleep( 0 );
+			SleepMs( 0 );
 		}
 		T( tApplied > 0 && ( tApplied - t0 ) * 1000 < 5, "Engine-Thread: MIDI -> DMX-Puffer in %.2f ms, ohne UI-Frame", ( tApplied - t0 ) * 1000 );
 		T( tSent > 0 && ( tSent - t0 ) * 1000 < 10, "DMX sofort gesendet: %.2f ms nach dem MIDI-Eingang (Grundtakt 1 Hz)", ( tSent - t0 ) * 1000 );
-		Sleep( 30 );
+		SleepMs( 30 );
 		DmxIO::Latency L = app.io.GetLatency();
 		T( L.n >= 1 && L.maxMs < 10, "Latenzmessung: %d Wert(e), Ø %.2f ms, max %.2f ms", L.n, L.avgMs, L.maxMs );
 		//burst of 200 CC messages: all applied, last value wins
@@ -926,7 +928,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			app.midi.queue_.push_back( { 0, 0xB0u | ( 77u << 8 ) | ( 10u << 16 ), Now() } );
 		}
 		EventSignal( app.EngineEvent() );
-		Sleep( 20 );
+		SleepMs( 20 );
 		int v = -1;
 		{
 			std::lock_guard< std::mutex > l( s.dmxLock );
@@ -962,7 +964,7 @@ int RunSelfTest( App& app, const std::string& dir )
 
 	//---- phase B: fixture editor (own lamps as OFL JSON)
 	{
-		const std::string libRoot = app.exeDir + "\\library";
+		const std::string libRoot = app.exeDir + LS_SEP "library";
 		std::vector< std::string > written;
 		auto add = []( EdFixture& e, EdType t ) {
 			EdChannel c = MakeChannel( t );
@@ -1055,28 +1057,31 @@ int RunSelfTest( App& app, const std::string& dir )
 			T( same, "Bibliothekslampe als Kopie (%s): gleiche Kanalbelegung, %d Modi", src->name.c_str(), (int)cd.modes.size() );
 		}
 		//show file carries the lamp; a missing library file is restored from the show
-		std::string sp = dir + "\\selftest_userfx.lightstage";
+		std::string sp = dir + LS_SEP "selftest_userfx.lightstage";
 		ok = s.Save( sp, &err );
 		std::string txt;
 		Json sj;
 		bool emb = ok && ReadText( sp, txt ) && ParseJson( txt, sj ) && sj[ "userFixtures" ].Find( id );
-		DeleteFileA( path.c_str() );
+		RemoveFile( path );
 		bool reg = emb && app.RegisterEmbeddedFixture( id, sj[ "userFixtures" ][ id ] );
-		DWORD at = GetFileAttributesA( path.c_str() );
-		T( emb && reg && at != INVALID_FILE_ATTRIBUTES, "Show-Datei enthält die eigene Lampe, fehlende Bibliotheksdatei wird wiederhergestellt" );
-		DeleteFileA( sp.c_str() );
+		const bool at = FileExists( path );
+		T( emb && reg && at, "Show-Datei enthält die eigene Lampe, fehlende Bibliotheksdatei wird wiederhergestellt" );
+		RemoveFile( sp );
 		//clean up
 		s.fixtures.erase( std::remove_if( s.fixtures.begin(), s.fixtures.end(), [ & ]( const FixtureInst& x ) { return x.id == fid; } ), s.fixtures.end() );
-		DeleteFileA( path.c_str() );
-		RemoveDirectoryA( ( libRoot + "\\user\\ls-test" ).c_str() );
+		RemoveFile( path );
+		{
+			std::error_code ec;
+			std::filesystem::remove( std::filesystem::u8path( libRoot + LS_SEP "user" LS_SEP "ls-test" ), ec );
+		}
 		{
 			//test manufacturer out of library\user\manufacturers.json again
-			std::string mp = libRoot + "\\user\\manufacturers.json", mt;
+			std::string mp = libRoot + LS_SEP "user" LS_SEP "manufacturers.json", mt;
 			Json mj;
 			if( ReadText( mp, mt ) && ParseJson( mt, mj ) && mj.IsObj() )
 			{
 				mj.o.erase( std::remove_if( mj.o.begin(), mj.o.end(), []( const std::pair< std::string, Json >& kv ) { return kv.first == "ls-test"; } ), mj.o.end() );
-				if( mj.o.empty() ) DeleteFileA( mp.c_str() );
+				if( mj.o.empty() ) RemoveFile( mp );
 				else WriteText( mp, WriteJson( mj, true ) );
 			}
 		}
@@ -1103,7 +1108,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.output.artnetInput  = true;
 		app.io.acceptLoopback = true;
 		app.io.Apply();
-		Sleep( 300 );
+		SleepMs( 300 );
 		net::Sock so = net::Udp();
 		sockaddr_in to{};
 		net::Addr( "127.0.0.1", 6454, to );
@@ -1112,7 +1117,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		for( int tries = 0; tries < 20 && !got; ++tries )
 		{
 			net::SendTo( so, p2.data(), (int)p2.size(), to );
-			Sleep( 50 );
+			SleepMs( 50 );
 			app.io.PollInput();
 			DmxFrame* fr = s.Frame( un );
 			got          = fr && memcmp( fr->data(), d, 512 ) == 0;
@@ -1120,7 +1125,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		net::Close( so );
 		T( got, "Art-Net Eingang (Loopback 127.0.0.1, Port-Adresse 100) -> Universe %d", un );
 		uint64_t sent0 = app.io.artnetSent;
-		Sleep( 400 );
+		SleepMs( 400 );
 		uint64_t sent1 = app.io.artnetSent;
 		float rate     = ( sent1 - sent0 ) / 0.4f;
 		T( sent1 > sent0, "Art-Net Ausgang läuft (an 127.0.0.1): ~%.0f Pakete/s für %d Universes", rate, 2 );
@@ -1168,7 +1173,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			const int n = net::Recv( rs, b, sizeof( b ) );
 			if( n > 0 && ParseE131( b, n, un, pr, pd, len ) ) { gotUni = un; got0 = pd[ 0 ]; }
 		}
-		Sleep( 300 );
+		SleepMs( 300 );
 		const uint64_t s1 = app.io.sacnSent;
 		net::Close( rs );
 		if( bound ) T( s1 > s0 && gotUni == s.universes[ 0 ].num && got0 == 77, "sACN-Ausgang: %llu Pakete, empfangen Universe %d, Kanal 1 = %d", (unsigned long long)( s1 - s0 ), gotUni, got0 );
@@ -1233,7 +1238,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			float dim = 0, pan = 0;
 			for( int i = 0; i < 40; ++i )
 			{
-				Sleep( 15 );
+				SleepMs( 15 );
 				std::vector< MidiEvent > ev;
 				app.midi.Poll( ev );
 				for( auto& e : ev ) ApplyMidi( s, e );
@@ -1282,7 +1287,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			auto send = [ & ]( const std::vector< uint8_t >& b ) {
 				int r = net::SendTo( so, b.data(), (int)b.size(), to );
 				sendLog += std::to_string( r ) + ( r < 0 ? "/" + std::to_string( net::LastError() ) : "" ) + " ";
-				Sleep( 2 );
+				SleepMs( 2 );
 			};
 			s.SetAttr( *sp, Attr::Dimmer, 0 );
 			send( BuildOsc( "/ls/fixture/" + std::to_string( sp->id ) + "/dimmer", { 0.5f } ) );
@@ -1304,7 +1309,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			int applied = 0, unknown = 0;
 			for( int i = 0; i < 300 && ( applied < 4 || unknown < 1 ); ++i )
 			{
-				Sleep( 10 );
+				SleepMs( 10 );
 				std::vector< OscMsg > ms;
 				oi.Poll( ms );
 				for( auto& m : ms ) ( ApplyOsc( s, m ) ? applied : unknown )++;
@@ -1366,7 +1371,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			Bridge b2;
 			std::string e2;
 			b2.Start( httpPort, &e2 );
-			for( int i = 0; i < 300 && !b2.Failed() && !b2.Ready(); ++i ) Sleep( 5 );
+			for( int i = 0; i < 300 && !b2.Failed() && !b2.Ready(); ++i ) SleepMs( 5 );
 			const bool failed = b2.Failed();
 			b2.Stop();
 			T( failed && !b2.Failed() && !b2.Running(), "Bridge: belegter Port wird gemeldet und nach Stop zurückgesetzt" );
@@ -1405,7 +1410,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			{
 				pumpOnce();
 				recvAll();
-				Sleep( 2 );
+				SleepMs( 2 );
 			}
 		};
 		auto httpGet = [ & ]( const char* path ) -> std::string {
@@ -1617,7 +1622,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			T( adopted && n == 1 && pushed && fromDev && back && kept && inMan, "Ableton-Belegung beide Richtungen: Device-Tabelle übernommen, LightStage -> Device (/ls/map/all), Device -> LightStage (/ls/map/set), bei Sync gewinnt LightStage, Manifest deviceMaps" );
 			//save / load
 			std::string err;
-			const std::string fn = dir + "\\selftest_ableton.lightstage";
+			const std::string fn = dir + LS_SEP "selftest_ableton.lightstage";
 			bool rt              = false;
 			if( s.Save( fn, &err ) )
 			{
@@ -1677,7 +1682,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			T( cm && !cm->knobsNewer && cm->state == "%7B%7D", "Zustand vom Device setzt \"Regler hier geändert\" zurück" );
 			//save / load: show id, kind, state
 			std::string err;
-			const std::string fn = dir + "\\selftest_tables.lightstage";
+			const std::string fn = dir + LS_SEP "selftest_tables.lightstage";
 			bool rt = false;
 			if( s.Save( fn, &err ) )
 			{
@@ -1728,11 +1733,11 @@ int RunSelfTest( App& app, const std::string& dir )
 		}
 		//11 testmanifest for the Ableton side (demo show)
 		{
-			const std::string ad = dir + "\\ableton";
-			const std::string td = ad + "\\test";
-			CreateDirectoryW( Widen( ad ).c_str(), nullptr );
-			CreateDirectoryW( Widen( td ).c_str(), nullptr );
-			const bool ok = WriteText( td + "\\manifest_sample.json", br.ManifestJson( s ) );
+			const std::string ad = dir + LS_SEP "ableton";
+			const std::string td = ad + LS_SEP "test";
+			MakeDir( ad );
+			MakeDir( td );
+			const bool ok = WriteText( td + LS_SEP "manifest_sample.json", br.ManifestJson( s ) );
 			T( ok, "Testmanifest geschrieben: ableton\\test\\manifest_sample.json" );
 		}
 		//restore the show
@@ -1837,9 +1842,9 @@ int RunSelfTest( App& app, const std::string& dir )
 	s.Bump();
 	//---- Phase E: textures with alpha / TIF / search, effects, tempo, parameters, MIDI files, lamp swap
 	{
-		const std::string td = dir + "\\selftest_tex";
-		CreateDirectoryW( Widen( td ).c_str(), nullptr );
-		CreateDirectoryW( Widen( td + "\\tex" ).c_str(), nullptr );
+		const std::string td = dir + LS_SEP "selftest_tex";
+		MakeDir( td );
+		MakeDir( td + LS_SEP "tex" );
 		//leaf texture: left half transparent, right half green
 		uint8_t leaf[ 16 * 16 * 4 ];
 		for( int y = 0; y < 16; ++y )
@@ -1848,8 +1853,8 @@ int RunSelfTest( App& app, const std::string& dir )
 				uint8_t* q = &leaf[ ( y * 16 + x ) * 4 ];
 				q[ 0 ] = 30; q[ 1 ] = 200; q[ 2 ] = 40; q[ 3 ] = x < 8 ? 0 : 255;
 			}
-		stbi_write_png( ( td + "\\leaf.png" ).c_str(), 16, 16, 4, leaf, 64 );
-		WriteText( td + "\\leaf.gltf", R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
+		stbi_write_png( ( td + LS_SEP "leaf.png" ).c_str(), 16, 16, 4, leaf, 64 );
+		WriteText( td + LS_SEP "leaf.gltf", R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
 "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],
 "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0},"baseColorFactor":[0,0,0,1],"metallicFactor":1},"alphaMode":"BLEND"}],
 "textures":[{"source":0}],"images":[{"uri":"leaf.png"}],
@@ -1859,7 +1864,7 @@ int RunSelfTest( App& app, const std::string& dir )
 {"bufferView":2,"componentType":5126,"count":4,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":6,"type":"SCALAR"}]})" );
 		MeshData lg;
 		std::string le;
-		bool okL      = LoadModel( td + "\\leaf.gltf", lg, &le );
+		bool okL      = LoadModel( td + LS_SEP "leaf.gltf", lg, &le );
 		float vcol    = lg.Count() ? lg.v[ 6 ] + lg.v[ 7 ] + lg.v[ 8 ] : 0;
 		T( okL && lg.parts.size() == 1 && lg.parts[ 0 ].cutoff > 0 && vcol > 2.9f, "glTF Cinema-4D-Stil (Basisfarbe schwarz, BLEND): Textur weiß gemischt (%.2f), Alpha-Schwelle %.2f %s", vcol, lg.parts.empty() ? 0.0f : lg.parts[ 0 ].cutoff, le.c_str() );
 		//uncompressed RGBA TIFF (decoded by WIC), black left / white right as opacity map, stored in tex\ under the name without '~'
@@ -1893,17 +1898,17 @@ int RunSelfTest( App& app, const std::string& dir )
 					uint8_t v = x < 8 ? 0 : 255;
 					t.insert( t.end(), { v, v, v, 255 } );
 				}
-			FILE* f = fopen( ( td + "\\tex\\alpha.tif" ).c_str(), "wb" );
+			FILE* f = fopen( ( td + LS_SEP "tex" LS_SEP "alpha.tif" ).c_str(), "wb" );
 			if( f ) { fwrite( t.data(), 1, t.size(), f ); fclose( f ); }
 			MeshImage ti;
 			bool okT = DecodeImage( t.data(), t.size(), ti );
 			T( okT && ti.w == 16 && ti.rgba[ ( 8 * 16 + 12 ) * 4 ] == 255 && ti.rgba[ ( 8 * 16 + 2 ) * 4 ] == 0, "TIF über Windows-Decoder: %dx%d", ti.w, ti.h );
 		}
-		WriteText( td + "\\leaf.mtl", "newmtl leaf\nKa 1 1 1\nKd 0 0 0\nmap_d asset:///alpha~.tif\n\nnewmtl miss\nKd 0.8 0.8 0.8\nmap_Kd asset:///gibtsnicht.png\n" );
-		WriteText( td + "\\leaf.obj", "mtllib leaf.mtl\nv -1 0 0\nv 1 0 0\nv 1 2 0\nv -1 2 0\nv 2 0 0\nv 3 0 0\nv 3 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nusemtl leaf\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\nusemtl miss\nf 5/1/1 6/2/1 7/3/1\n" );
+		WriteText( td + LS_SEP "leaf.mtl", "newmtl leaf\nKa 1 1 1\nKd 0 0 0\nmap_d asset:///alpha~.tif\n\nnewmtl miss\nKd 0.8 0.8 0.8\nmap_Kd asset:///gibtsnicht.png\n" );
+		WriteText( td + LS_SEP "leaf.obj", "mtllib leaf.mtl\nv -1 0 0\nv 1 0 0\nv 1 2 0\nv -1 2 0\nv 2 0 0\nv 3 0 0\nv 3 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nusemtl leaf\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\nusemtl miss\nf 5/1/1 6/2/1 7/3/1\n" );
 		MeshData lo;
 		std::string loe;
-		bool okLo   = LoadModel( td + "\\leaf.obj", lo, &loe );
+		bool okLo   = LoadModel( td + LS_SEP "leaf.obj", lo, &loe );
 		float cutLo = 0, baseLo = 0;
 		for( auto& p : lo.parts )
 			if( p.cutoff > 0 ) { cutLo = p.cutoff; baseLo = lo.v[ lo.idx[ p.first ] * MeshData::kStride + 6 ]; }
@@ -1913,7 +1918,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		//rendered: left half of the leaf quad is cut out, right half green
 		{
 			ModelObj mo;
-			mo.path  = td + "\\leaf.gltf";
+			mo.path  = td + LS_SEP "leaf.gltf";
 			mo.name  = "leaf";
 			mo.pos   = V3( 0, 1.2f, 6.0f );
 			s.models.push_back( mo );
@@ -1926,7 +1931,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			app.cam.yaw    = 0;
 			app.cam.pitch  = 0;
 			app.cam.dist   = 4;
-			SavePng( app, dir + "\\selftest_alpha.png", 640, 360 );
+			SavePng( app, dir + LS_SEP "selftest_alpha.png", 640, 360 );
 			std::vector< uint8_t > px;
 			int W = 0, H = 0;
 			app.ren.ReadOutput( px, W, H );
@@ -1940,12 +1945,17 @@ int RunSelfTest( App& app, const std::string& dir )
 		}
 		//the user's test models (Downloads\tree.*), diagnostics only
 		{
+#ifdef _WIN32
 			wchar_t up[ MAX_PATH ] = {};
 			GetEnvironmentVariableW( L"USERPROFILE", up, MAX_PATH );
-			const std::string dl = Narrow( up ) + "\\Downloads\\";
+			const std::string dl = Narrow( up ) + LS_SEP "Downloads" LS_SEP;
+#else
+			const char* home = getenv( "HOME" );
+			const std::string dl = std::string( home ? home : "" ) + "/Downloads/";
+#endif
 			for( const char* fn : { "tree.gltf", "tree.glb", "tree.obj", "tree.fbx" } )
 			{
-				if( GetFileAttributesW( Widen( dl + fn ).c_str() ) == INVALID_FILE_ATTRIBUTES ) continue;
+				if( !FileExists( dl + fn ) ) continue;
 				MeshData m;
 				std::string er;
 				bool ok = LoadModel( dl + fn, m, &er );
@@ -1974,7 +1984,7 @@ int RunSelfTest( App& app, const std::string& dir )
 					app.cam.yaw    = 20;
 					app.cam.pitch  = 8;
 					app.cam.dist   = 9;
-					SavePng( app, dir + "\\selftest_tree.png", 960, 720 );
+					SavePng( app, dir + LS_SEP "selftest_tree.png", 960, 720 );
 					s.models.pop_back();
 					s.workLight = false;
 					s.master    = mOld;
@@ -2086,10 +2096,10 @@ int RunSelfTest( App& app, const std::string& dir )
 				const double t0 = Now();
 				for( int i = 0; i < 72; ++i )
 				{
-					while( Now() < t0 + ( i + 1 ) * per ) Sleep( 0 );
+					while( Now() < t0 + ( i + 1 ) * per ) SleepMs( 0 );
 					h.Send( 0xF8 );
 				}
-				Sleep( 60 );
+				SleepMs( 60 );
 				h.Close();
 				ev.clear();
 				app.midi.Poll( ev );
@@ -2151,7 +2161,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			s.workLight               = false;
 			s.stage.exposure          = 1;
 			//MIDI mapping file
-			const std::string mf = dir + "\\selftest_midi.lsmidi";
+			const std::string mf = dir + LS_SEP "selftest_midi.lsmidi";
 			bool ex              = app.ExportMidi( mf );
 			s.midi.clear();
 			int n = app.ImportMidi( mf, true );
@@ -2176,9 +2186,9 @@ int RunSelfTest( App& app, const std::string& dir )
 			s.tempo.bpm  = 133;
 			StartProgram( s, 0, true );
 			std::string err;
-			bool sv = s.Save( dir + "\\selftest_fx.lightstage", &err );
+			bool sv = s.Save( dir + LS_SEP "selftest_fx.lightstage", &err );
 			Show t;
-			bool ld = t.Load( dir + "\\selftest_fx.lightstage", app.lib, &err );
+			bool ld = t.Load( dir + LS_SEP "selftest_fx.lightstage", app.lib, &err );
 			T( sv && ld && t.effects.size() == s.effects.size() && t.programs.size() == s.programs.size() && fabsf( t.tempo.bpm - 133 ) < 0.01f && pi2 >= 0,
 			   "Show mit %d Effekten, %d Programmen, %.0f BPM gespeichert/geladen %s", (int)t.effects.size(), (int)t.programs.size(), t.tempo.bpm, err.c_str() );
 		}
@@ -2201,7 +2211,7 @@ int RunSelfTest( App& app, const std::string& dir )
 				const std::string src = u->source, id = u->id;
 				std::string why;
 				bool del = app.DeleteUserFixture( u, &why );
-				T( del && !app.lib.Find( id ) && GetFileAttributesW( Widen( src ).c_str() ) == INVALID_FILE_ATTRIBUTES, "Eigene Lampe gelöscht (%s) %s", id.c_str(), why.c_str() );
+				T( del && !app.lib.Find( id ) && !FileExists( src ), "Eigene Lampe gelöscht (%s) %s", id.c_str(), why.c_str() );
 			}
 			else
 				T( false, "Eigene Test-Lampe für den Lösch-Test nicht gefunden" );
@@ -2213,9 +2223,9 @@ int RunSelfTest( App& app, const std::string& dir )
 			Camera camOld   = app.cam;
 			app.cam         = Camera();
 			float l0 = 0, l1 = 0;
-			SavePng( app, dir + "\\selftest_worklight_off.png", 640, 360, &l0 );
+			SavePng( app, dir + LS_SEP "selftest_worklight_off.png", 640, 360, &l0 );
 			s.workLight = true;
-			SavePng( app, dir + "\\selftest_worklight_on.png", 640, 360, &l1 );
+			SavePng( app, dir + LS_SEP "selftest_worklight_on.png", 640, 360, &l1 );
 			s.workLight = false;
 			app.cam     = camOld;
 			T( l1 > l0 * 2 + 5, "Arbeitslicht: Helligkeit %.1f -> %.1f", l0, l1 );
@@ -3006,7 +3016,7 @@ int RunSelfTest( App& app, const std::string& dir )
 				}
 				//audio file: a generated WAV through Media Foundation
 				{
-					const std::string wav = dir + "\\selftest_tone.wav";
+					const std::string wav = dir + LS_SEP "selftest_tone.wav";
 					{
 						const int rate = 48000, n = rate;
 						std::vector< int16_t > pcm( n * 2 );
@@ -3048,7 +3058,7 @@ int RunSelfTest( App& app, const std::string& dir )
 				}
 				//2.0: Lightshow export (.lightshow): every frame = what the output sends, re-read identically, cues, scene, 3D data
 				{
-					const std::string lbp = dir + "\\selftest.lightshow";
+					const std::string lbp = dir + LS_SEP "selftest.lightshow";
 					//own, clean timeline: dimmer 0 -> 1 over 2 s on lamps 1 + 2, marker "Drop" at 4 s, loop on (the export ignores it)
 					Timeline keepTl = tl;
 					tl              = Timeline();
@@ -3147,7 +3157,7 @@ int RunSelfTest( App& app, const std::string& dir )
 						go.fxLayers = false;
 						std::string ge;
 						LbxFile G;
-						const std::string gp = dir + "\\selftest_groups.lightshow";
+						const std::string gp = dir + LS_SEP "selftest_groups.lightshow";
 						const bool gok      = LbxExport( s, app.sim, go, gp, &ge ) && LbxRead( gp, G, &ge );
 						s.groups.resize( ng );
 						const Json& gl = G.scene[ "groups" ];
@@ -3185,7 +3195,7 @@ int RunSelfTest( App& app, const std::string& dir )
 						const int fb = chaseTpl ? AddEffectFromPreset( s, *chaseTpl, "LB aus", { F( 2 ).id, F( 3 ).id }, false ) : 0;
 						for( auto& e : s.effects ) e.fade = 0;
 						auto fxById = [ & ]( int id ) -> Effect* { for( auto& e : s.effects ) if( e.id == id ) return &e; return nullptr; };
-						const std::string p1 = dir + "\\selftest_fx1.lightshow", p2 = dir + "\\selftest_fx2.lightshow", p3 = dir + "\\selftest_fx3.lightshow";
+						const std::string p1 = dir + LS_SEP "selftest_fx1.lightshow", p2 = dir + LS_SEP "selftest_fx2.lightshow", p3 = dir + LS_SEP "selftest_fx3.lightshow";
 						LbxOptions fo;
 						fo.to = 3.0;
 						std::string e1, e2, e3;
@@ -3254,7 +3264,7 @@ int RunSelfTest( App& app, const std::string& dir )
 					}
 					//2.0: Lightshow import - export again from the imported show and compare frame by frame
 					{
-						const std::string lbp2 = dir + "\\selftest_reimport.lightshow";
+						const std::string lbp2 = dir + LS_SEP "selftest_reimport.lightshow";
 						auto reexport = [ & ]( Show& n, int& maxDiff, int& frames ) -> bool {
 							LbxOptions ro;
 							ro.visual = false;
@@ -3354,7 +3364,7 @@ int RunSelfTest( App& app, const std::string& dir )
 							bool gone     = !tl.Find( t.uid );
 							T( cv && gone && tl.tracks.size() >= before, "Lightshow-Spur in Time Lanes umgewandelt: %d Spuren (Lightshow-Spur entfernt %s)", (int)tl.tracks.size() - (int)before + 1, gone ? "ja" : "nein" );
 						}
-						DeleteFileA( lbp2.c_str() );
+						RemoveFile( lbp2 );
 					}
 					LbxJob e;
 					tl.tracks.clear();
@@ -3362,7 +3372,7 @@ int RunSelfTest( App& app, const std::string& dir )
 					T( refused && !e.err.empty(), "Lightshow-Export ohne Time Line abgelehnt (%s)", e.err.c_str() );
 					tl = keepTl;
 					step( 0.02f );
-					DeleteFileA( lbp.c_str() );
+					RemoveFile( lbp );
 				}
 				tl = Timeline();
 				step( 0.1f );
@@ -3374,7 +3384,7 @@ int RunSelfTest( App& app, const std::string& dir )
 				s.snapshots[ A ].fade   = 2.5f;
 				s.RecallSnapshot( B );
 				step( 0.1f );
-				const std::string fn = dir + "\\selftest_snap.lightstage";
+				const std::string fn = dir + LS_SEP "selftest_snap.lightstage";
 				std::string err;
 				bool sv = s.Save( fn, &err );
 				Show s2;
@@ -3434,27 +3444,27 @@ int RunSelfTest( App& app, const std::string& dir )
 		Run( app, 5.0f );
 		app.sim.haze = app.show.stage.haze;
 		float lum, br;
-		bool ok = SavePng( app, dir + "\\shot_front.png", 1600, 900, &lum, &br );
+		bool ok = SavePng( app, dir + LS_SEP "shot_front.png", 1600, 900, &lum, &br );
 		T( ok && lum > 6 && lum < 160, "Render Front: mittlere Helligkeit %.1f, %.2f%% sehr hell, %d Lichter, %d Schatten, %d Kegel, %.1f ms", lum, br * 100, app.ren.stats.lights, app.ren.stats.shadows, app.ren.stats.beams, app.ren.stats.ms );
 		//beams make a difference
 		app.show.stage.beams = false;
 		float lumNoBeams;
-		SavePng( app, dir + "\\shot_nobeams.png", 1600, 900, &lumNoBeams );
+		SavePng( app, dir + LS_SEP "shot_nobeams.png", 1600, 900, &lumNoBeams );
 		app.show.stage.beams = true;
 		T( lum > lumNoBeams * 1.05f, "Volumetrische Kegel sichtbar (%.1f mit / %.1f ohne)", lum, lumNoBeams );
 		app.cam.yaw = 32; app.cam.pitch = 20; app.cam.dist = 21;
-		SavePng( app, dir + "\\shot_foh.png", 1600, 900 );
+		SavePng( app, dir + LS_SEP "shot_foh.png", 1600, 900 );
 		app.cam.yaw = 90; app.cam.pitch = 6; app.cam.dist = 17;
-		SavePng( app, dir + "\\shot_side.png", 1600, 900 );
+		SavePng( app, dir + LS_SEP "shot_side.png", 1600, 900 );
 		app.cam = Camera();
 		app.cam.target = V3( 0, 3.4f, 0 );
 		app.cam.dist = 19;
 		app.cam.pitch = 9;
 		app.show.RecallSnapshot( 1 );
 		Run( app, 4.0f );
-		SavePng( app, dir + "\\shot_look2.png", 1600, 900 );
+		SavePng( app, dir + LS_SEP "shot_look2.png", 1600, 900 );
 		app.cam.target = V3( 0, 1.2f, 0 ); app.cam.pitch = 70; app.cam.dist = 13; app.cam.yaw = 0;
-		SavePng( app, dir + "\\shot_floor.png", 1600, 900 );
+		SavePng( app, dir + LS_SEP "shot_floor.png", 1600, 900 );
 		app.cam = Camera();
 		app.cam.target = V3( 0, 3.4f, 0 );
 		app.cam.dist = 19;
@@ -3643,7 +3653,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			doc->FindAll( "OutputDeviceNDI", ndi );
 		}
 		std::string werr;
-		const bool wr = WriteResolumePreset( dir + "\\selftest_resolume.xml", xml, werr );
+		const bool wr = WriteResolumePreset( dir + LS_SEP "selftest_resolume.xml", xml, werr );
 		T( doc && sls.size() == 1 && (int)mks.size() == m4 && ndi.size() == 1 && ndi[ 0 ]->Attr( "name" ) == "Screen 1" && wr, "Resolume: Preset-XML gültig (%d KB, %d Slice, %d Masken)%s", (int)( xml.size() / 1024 ), (int)sls.size(), (int)mks.size(), perr.c_str() );
 		//6) names: composition output -> projector name; two projectors with the same name stay unique
 		Projector pc = pj;
@@ -3654,7 +3664,7 @@ int RunSelfTest( App& app, const std::string& dir )
 	}
 	//---- 1.2: video export (2 s, 1280x720, 25 fps, camera orbit)
 	{
-		const std::string vp = dir + "\\selftest_export.mp4";
+		const std::string vp = dir + LS_SEP "selftest_export.mp4";
 		app.exp_.res     = 0;
 		app.exp_.fpsIdx  = 0;
 		app.exp_.seconds = 2;
@@ -3665,21 +3675,22 @@ int RunSelfTest( App& app, const std::string& dir )
 		const bool stepOk = app.exp_.err.empty();
 		app.ExportFinish( stepOk );
 		const double secs = VideoFileSeconds( vp );
-		WIN32_FILE_ATTRIBUTE_DATA fa{};
-		GetFileAttributesExW( Widen( vp ).c_str(), GetFileExInfoStandard, &fa );
+		std::error_code fec;
+		const uintmax_t fsz = std::filesystem::file_size( std::filesystem::u8path( vp ), fec );
+		struct { unsigned nFileSizeLow; } fa{ fec ? 0u : (unsigned)fsz };
 		T( started && stepOk && fabs( secs - 2.0 ) < 0.15 && fa.nFileSizeLow > 20000 && !app.ExportActive(), "Video-Export: %.2f s MP4, %u KB, %.1f s Rechenzeit%s%s", secs, (unsigned)( fa.nFileSizeLow / 1024 ), Now() - t0, app.exp_.err.empty() ? "" : " - ", app.exp_.err.c_str() );
 	}
 	//---- 1.2: autosave file + recovery (own file names: the user's autosave is never touched)
 	{
-		const std::string af = dir + "\\selftest_autosave.lightstage";
-		app.show.path        = dir + "\\Meine Show.lightstage";
+		const std::string af = dir + LS_SEP "selftest_autosave.lightstage";
+		app.show.path        = dir + LS_SEP "Meine Show.lightstage";
 		app.show.stage.haze  = 0.77f;
 		const bool wr        = app.AutosaveWrite( af );
 		app.NewShow();
 		const bool rec = app.AutosaveRecover( af );
 		T( wr && rec && fabsf( app.show.stage.haze - 0.77f ) < 0.001f && app.show.dirty && FileName( app.show.path ) == "Meine Show.lightstage",
 		   "Autosave: gesichert und wiederhergestellt (Haze %.2f, Datei %s, als ungespeichert markiert)", app.show.stage.haze, FileName( app.show.path ).c_str() );
-		DeleteFileW( Widen( af ).c_str() );
+		RemoveFile( af );
 		app.show.path.clear();
 	}
 	//---- undo / redo (set-up states; live values stay)
@@ -3702,7 +3713,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		{
 			app.UndoTick( false );//as at the end of every UI frame
 			if( afterShort == 9 && Now() > te - 1.0 ) afterShort = app.UndoCount();
-			Sleep( 16 );
+			SleepMs( 16 );
 		}
 		T( afterShort == 0 && app.UndoCount() == 1, "Undo: Änderung im Frame-Ablauf wird nach kurzer Ruhe ein Schritt (%d nach 0.2 s, %d nach 1.2 s)", (int)afterShort, (int)app.UndoCount() );
 		//step 2: delete a lamp
@@ -3817,7 +3828,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.stage.decks[ 0 ].edge      = V3( 0.2f, 0.5f, 1.0f );
 		s.stage.decks[ 0 ].edgeLevel = 2;
 		Run( app, 0.2f );
-		const bool png = SavePng( app, dir + "\\selftest_decks.png", 960, 540, &lum );
+		const bool png = SavePng( app, dir + LS_SEP "selftest_decks.png", 960, 540, &lum );
 		T( png && lum > 0.005f, "Bild mit Podesten gerendert (Helligkeit %.3f)", lum );
 		s.workLight = false;
 		s.stage.decks.clear();
@@ -4377,8 +4388,8 @@ int RunSelfTest( App& app, const std::string& dir )
 			return ( Now() - t0 ) / 6 * 1000.0;
 		};
 		while( glGetError() != GL_NO_ERROR ) {}
-		const double tn = shot( false, "\\selftest_quality_normal.png", pn );
-		const double th = shot( true, "\\selftest_quality_high.png", ph );
+		const double tn = shot( false, LS_SEP "selftest_quality_normal.png", pn );
+		const double th = shot( true, LS_SEP "selftest_quality_high.png", ph );
 		const GLenum ge = glGetError();
 		int diff = 0;
 		for( size_t i = 0; i + 2 < pn.size() && i + 2 < ph.size(); i += 4 )
@@ -4428,10 +4439,12 @@ int RunSelfTest( App& app, const std::string& dir )
 		std::string last;
 		while( *p ) { last = p; p += strlen( p ) + 1; ++items; }
 		T( items == 6 && last == "free", "Combo-Liste übersetzt: %d Einträge, letzter '%s'", items, last.c_str() );
+#ifdef _WIN32
 		const wchar_t* w = LW( L"LightStage Show (*.lightstage)\0*.lightstage\0Alle Dateien\0*.*\0" );
 		const wchar_t* w3 = w + wcslen( w ) + 1;
 		w3 += wcslen( w3 ) + 1;
 		T( !wcscmp( w3, L"All files" ) && !wcscmp( w3 + wcslen( w3 ) + 1, L"*.*" ), "Dateifilter (Windows-Dialog) übersetzt" );
+#endif
 		gLang = kLangDe;
 		T( !strcmp( L( "Speichern" ), "Speichern" ), "Deutsch bleibt unverändert" );
 		gLang = old;
