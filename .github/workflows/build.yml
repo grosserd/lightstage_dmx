@@ -38,11 +38,20 @@ jobs:
       - name: Self test
         if: success()
         continue-on-error: true
+        timeout-minutes: 10
         shell: bash
         run: |
           cd build/LightStage
-          ./LightStage --selftest; echo "exit $?"
-          tail -n 60 selftest.log || true
+          ./LightStage --selftest & pid=$!
+          for i in $(seq 1 480); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+          if kill -0 $pid 2>/dev/null; then kill -9 $pid; echo "::error title=Selftest::timeout after 8 min"; fi
+          wait $pid; echo "exit $?"
+          tail -n 80 selftest.log || true
+          # public annotations: summary + every failed check (readable without login)
+          sum=$(grep -E "^[0-9]+ OK, [0-9]+ FAIL" selftest.log | tail -n 1)
+          echo "::notice title=Selftest macOS::${sum:-no summary (crash?)}%0A$(tail -n 3 selftest.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+          grep -F "[FAIL]" selftest.log | head -n 40 | sed 's/%/%25/g' | while read -r l; do echo "::warning title=Selftest FAIL::$l"; done
+          if [ -f lightstage.log ]; then echo "::notice title=lightstage.log::$(tail -n 25 lightstage.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; fi
 
       - name: Upload
         if: always()
