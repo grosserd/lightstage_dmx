@@ -1,4 +1,5 @@
 #include "render.h"
+#include <cstring>
 
 namespace ls
 {
@@ -916,8 +917,27 @@ void Fbo::Destroy()
 	w = h = 0;
 }
 
-static GLuint Compile( GLenum type, const std::string& src, const char* name, std::string* err )
+#ifdef __APPLE__
+//macOS has OpenGL 4.1: the shaders are written for 4.3 but use nothing newer except the explicit uniform block
+//bindings (4.2). Here they become "#version 410 core" and the block bindings are set after linking (Program).
+static std::string ToGl41( const std::string& in )
 {
+	std::string x = in;
+	size_t p      = x.find( "#version 430 core" );
+	if( p != std::string::npos ) x.replace( p, 17, "#version 410 core" );
+	for( const char* b : { "layout(std140, binding = 0)", "layout(std140, binding = 1)" } )
+		for( size_t q; ( q = x.find( b ) ) != std::string::npos; ) x.replace( q, strlen( b ), "layout(std140)" );
+	return x;
+}
+#endif
+
+static GLuint Compile( GLenum type, const std::string& srcIn, const char* name, std::string* err )
+{
+#ifdef __APPLE__
+	const std::string src = ToGl41( srcIn );
+#else
+	const std::string& src = srcIn;
+#endif
 	GLuint s      = glCreateShader( type );
 	const char* p = src.c_str();
 	glShaderSource( s, 1, &p, nullptr );
@@ -963,6 +983,13 @@ GLuint Renderer::Program( const char* vs, const char* fs, const char* name )
 		g_shaderErr += std::string( name ) + " link: " + log;
 		return 0;
 	}
+#ifdef __APPLE__
+	//the uniform block bindings that 4.3 sets in the shader (binding = 0 / 1)
+	const GLuint li = glGetUniformBlockIndex( p, "LightBlock" );
+	if( li != GL_INVALID_INDEX ) glUniformBlockBinding( p, li, 0 );
+	const GLuint pi = glGetUniformBlockIndex( p, "ProjBlock" );
+	if( pi != GL_INVALID_INDEX ) glUniformBlockBinding( p, pi, 1 );
+#endif
 	return p;
 }
 
