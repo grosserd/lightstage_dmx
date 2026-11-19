@@ -43,7 +43,7 @@ jobs:
         run: |
           set +e
           cd build/LightStage
-          ./LightStage --selftest & pid=$!
+          LS_SOFTWARE_GL=1 ./LightStage --selftest & pid=$!
           for i in $(seq 1 360); do kill -0 $pid 2>/dev/null || break; sleep 1; done
           if kill -0 $pid 2>/dev/null; then
             echo "::error title=Selftest::timeout after 6 min"

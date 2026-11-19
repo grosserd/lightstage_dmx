@@ -29,6 +29,7 @@
 #if defined(_GLFW_COCOA)
 
 #include <unistd.h>
+#include <stdlib.h>
 #include <math.h>
 
 static void makeContextCurrentNSGL(_GLFWwindow* window)
@@ -204,7 +205,14 @@ GLFWbool _glfwCreateContextNSGL(_GLFWwindow* window,
     NSOpenGLPixelFormatAttribute attribs[40];
     int index = 0;
 
-    ADD_ATTRIB(NSOpenGLPFAAccelerated);
+    // LightStage patch: LS_SOFTWARE_GL=1 (CI machines without a GPU) asks for Apple's software renderer
+    if (getenv("LS_SOFTWARE_GL"))
+    {
+        ADD_ATTRIB(NSOpenGLPFARendererID);
+        ADD_ATTRIB(0x00020400); // kCGLRendererGenericFloatID
+    }
+    else
+        ADD_ATTRIB(NSOpenGLPFAAccelerated);
     ADD_ATTRIB(NSOpenGLPFAClosestPolicy);
 
     if (ctxconfig->nsgl.offline)

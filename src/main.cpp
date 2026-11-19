@@ -74,10 +74,12 @@ static void StartHangWatch() {}
 #endif
 
 //error before / instead of the main window
+static bool g_noDialogs = false;//self test / scripted / command line modes: errors go to the log, never a modal dialog (nobody could close it)
 static void FatalMessage( const std::string& msg )
 {
 	Log( "%s", msg.c_str() );
-	ShowError( msg );
+	if( g_noDialogs ) fprintf( stderr, "LightStage: %s\n", msg.c_str() );
+	else ShowError( msg );
 }
 
 //---- GLFW callbacks. The UI test (g_uiTest) does not install the ImGui input callbacks: the real mouse,
@@ -242,6 +244,7 @@ static int RunLightStage( const std::vector< std::string >& av )
 	}
 	const bool scripted = !shotUi.empty() || !uiTest.empty();//fixed window size and frame time, no vsync, no autosave
 	g_uiTest            = !uiTest.empty();
+	g_noDialogs         = selftest || scripted || !showcaseDir.empty() || !resOut.empty() || !lbxOut.empty() || !vidOut.empty();
 	//UI language before anything builds names: settings.json "language", --lang overrides, the self test runs in German
 	{
 		std::string txt;
