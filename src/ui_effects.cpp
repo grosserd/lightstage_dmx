@@ -2,8 +2,7 @@
 // lamp type swap / delete
 #include "app.h"
 #include "imgui.h"
-#include <windows.h>
-#include <commdlg.h>
+#include "platform.h"
 
 namespace ls
 {
@@ -118,18 +117,9 @@ void App::OscWindow()
 	auto match    = [ & ]( const Param& p ) { return q.empty() || p.addr.find( q ) != std::string::npos || ToLower( p.label ).find( q ) != std::string::npos || ToLower( p.group ).find( q ) != std::string::npos; };
 	if( ImGui::Button( L( "Liste exportieren..." ) ) )
 	{
-		wchar_t buf[ MAX_PATH * 4 ] = L"lightstage_osc.csv";
-		OPENFILENAMEW of{};
-		of.lStructSize = sizeof( of );
-		of.hwndOwner   = (HWND)hwnd;
-		of.lpstrFilter = L"CSV (Excel) (*.csv)\0*.csv\0Text (*.txt)\0*.txt\0";
-		of.lpstrFile   = buf;
-		of.nMaxFile    = MAX_PATH * 4;
-		of.lpstrDefExt = L"csv";
-		of.Flags       = OFN_NOCHANGEDIR | OFN_EXPLORER | OFN_OVERWRITEPROMPT;
-		if( GetSaveFileNameW( &of ) )
+		const std::string path = SaveFileDialog( FilterList( "CSV (Excel) (*.csv)\0*.csv\0Text (*.txt)\0*.txt\0" ), "csv", "lightstage_osc.csv" );
+		if( !path.empty() )
 		{
-			const std::string path = Narrow( buf );
 			const bool csv         = ToLower( path ).find( ".csv" ) != std::string::npos;
 			std::string t          = csv ? L( "\xEF\xBB\xBF" "Adresse;Parameter;Bereich;Gruppe;aktueller Wert\r\n" ) : L( "Grosserd LightStage - OSC-Adressen (UDP-Port " ) + std::to_string( show.output.oscPort ) + ")\r\n\r\n";
 			std::string grp;
@@ -294,7 +284,7 @@ bool App::DeleteUserFixture( const FixtureDef* d, std::string* why )
 			if( why ) *why = L( "wird in der Show benutzt" );
 			return false;
 		}
-	if( !d->source.empty() ) DeleteFileW( Widen( d->source ).c_str() );
+	if( !d->source.empty() ) RemoveFile( d->source );
 	const std::string id = d->id;
 	if( add_.def == d ) add_.def = nullptr;
 	add_.list.clear();
@@ -1098,7 +1088,7 @@ void App::EffectEditor( Effect& e )
 			if( ImGui::Button( L( "Als Preset speichern" ) ) )
 			{
 				std::string n = presetName_[ 0 ] ? presetName_ : e.name;
-				CreateDirectoryW( Widen( exeDir + "\\library\\user" ).c_str(), nullptr );
+				MakeDir( exeDir + LS_SEP "library" LS_SEP "user" );
 				if( SaveUserFxPreset( UserFxFile(), n, e ) ) { SetStatus( L( "Preset gespeichert: " ) + n ); userPresetsLoaded_ = false; }
 				else SetStatus( L( "Preset konnte nicht gespeichert werden" ) );
 			}

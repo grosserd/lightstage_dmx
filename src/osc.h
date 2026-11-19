@@ -43,7 +43,7 @@ public:
 	std::atomic< uint64_t > received{ 0 }, bad{ 0 };
 	std::deque< std::string > monitor;//recent messages (main thread)
 	std::string error;
-	void* wake = nullptr;//event (HANDLE) signalled when a message arrives
+	void* wake = nullptr;//event signalled when a message arrives (EventCreate in netsock.h; on Windows any event HANDLE)
 
 private:
 	void Loop();

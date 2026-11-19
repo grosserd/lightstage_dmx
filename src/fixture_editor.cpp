@@ -1,5 +1,4 @@
 #include "fixture_editor.h"
-#include <windows.h>
 #include <ctime>
 
 namespace ls
@@ -871,8 +870,8 @@ std::string Slug( const std::string& s )
 
 void RegisterUserManufacturer( const std::string& libRoot, const std::string& slug, const std::string& name )
 {
-	CreateDirectoryW( Widen( libRoot + "\\user" ).c_str(), nullptr );
-	std::string mp = libRoot + "\\user\\manufacturers.json", txt;
+	MakeDir( libRoot + LS_SEP "user" );
+	std::string mp = libRoot + LS_SEP "user" LS_SEP "manufacturers.json", txt;
 	Json mj        = Json::Obj();
 	if( ReadText( mp, txt ) ) ParseJson( txt, mj );
 	if( !mj.IsObj() ) mj = Json::Obj();
@@ -892,11 +891,11 @@ bool SaveUserFixture( const std::string& libRoot, const EdFixture& f, std::strin
 		return false;
 	}
 	const std::string mf = Slug( f.manufacturer ), key = Slug( f.name );
-	const std::string dir = libRoot + "\\user\\" + mf;
-	CreateDirectoryW( Widen( libRoot + "\\user" ).c_str(), nullptr );
-	CreateDirectoryW( Widen( dir ).c_str(), nullptr );
+	const std::string dir = libRoot + LS_SEP "user" LS_SEP + mf;
+	MakeDir( libRoot + LS_SEP "user" );
+	MakeDir( dir );
 	RegisterUserManufacturer( libRoot, mf, f.manufacturer );
-	outPath = dir + "\\" + key + ".json";
+	outPath = dir + LS_SEP + key + ".json";
 	outId   = "user/" + mf + "/" + key;
 	if( !WriteText( outPath, WriteJson( BuildOfl( f ), true ) ) )
 	{

@@ -753,8 +753,7 @@ bool LbxFinish( Show& s, LbxJob& j, bool ok )
 	{
 		char b[ 32 ];
 		const time_t now = time( nullptr );
-		tm lt{};
-		localtime_s( &lt, &now );
+		tm lt = LocalTime( now );
 		strftime( b, sizeof( b ), "%Y-%m-%dT%H:%M:%S", &lt );
 		info.Set( "created", b );
 	}
@@ -807,8 +806,8 @@ bool LbxFinish( Show& s, LbxJob& j, bool ok )
 		if( j.visBytes > 0 ) Chunk( f, "FXLV", LayerChunk( L, j.frames, 2 * j.visBytes, j.o.fps, L.visKeys, L.visData ) ), ++chunks;
 	}
 	Set32( f, cntAt, chunks );
-	FILE* fp = nullptr;
-	if( _wfopen_s( &fp, Widen( j.path ).c_str(), L"wb" ) != 0 || !fp )
+	FILE* fp = FOpen( j.path, "wb" );
+	if( !fp )
 	{
 		j.err = "Datei kann nicht geschrieben werden";
 		return false;
@@ -838,8 +837,8 @@ bool LbxExport( Show& s, SimGlobals& sim, const LbxOptions& o, const std::string
 bool LbxRead( const std::string& path, LbxFile& out, std::string* err )
 {
 	out = LbxFile();
-	FILE* fp = nullptr;
-	if( _wfopen_s( &fp, Widen( path ).c_str(), L"rb" ) != 0 || !fp ) { if( err ) *err = "open"; return false; }
+	FILE* fp = FOpen( path, "rb" );
+	if( !fp ) { if( err ) *err = "open"; return false; }
 	std::vector< uint8_t > d;
 	uint8_t buf[ 65536 ];
 	size_t n;

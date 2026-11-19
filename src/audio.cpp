@@ -1,23 +1,11 @@
-// LightStage 2.0: audio file + playback, LTC decoder / encoder / input
+// LightStage 2.0: audio file + playback, LTC decoder / encoder / input (platform parts: audio_win.cpp, audio_mac.mm)
 #include "audio.h"
 #include "common.h"
-#include <windows.h>
-#include <mmsystem.h>
-#include <objbase.h>
-#include <mfapi.h>
-#include <mfidl.h>
-#include <mfreadwrite.h>
 #include <algorithm>
 #include <cmath>
 
 namespace ls
 {
-template< class T > static void Rel( T*& p )
-{
-	if( p ) p->Release();
-	p = nullptr;
-}
-
 //================================================================ file
 float AudioData::PeakAt( double a, double b ) const
 {
@@ -31,64 +19,7 @@ float AudioData::PeakAt( double a, double b ) const
 }
 bool LoadAudioFile( const std::string& file, AudioData& out, std::string& err )
 {
-	static std::once_flag once;
-	std::call_once( once, [] { MFStartup( MF_VERSION, MFSTARTUP_FULL ); } );
-	const HRESULT co = CoInitializeEx( nullptr, COINIT_MULTITHREADED );
-	IMFSourceReader* rd = nullptr;
-	IMFMediaType* mt    = nullptr;
-	bool ok             = false;
-	out                 = AudioData();
-	out.file            = file;
-	do
-	{
-		if( FAILED( MFCreateSourceReaderFromURL( Widen( file ).c_str(), nullptr, &rd ) ) ) { err = "cannot open the file"; break; }
-		rd->SetStreamSelection( (DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE );
-		if( FAILED( rd->SetStreamSelection( (DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, TRUE ) ) ) { err = "no audio stream"; break; }
-		if( FAILED( MFCreateMediaType( &mt ) ) ) break;
-		mt->SetGUID( MF_MT_MAJOR_TYPE, MFMediaType_Audio );
-		mt->SetGUID( MF_MT_SUBTYPE, MFAudioFormat_PCM );
-		mt->SetUINT32( MF_MT_AUDIO_BITS_PER_SAMPLE, 16 );
-		if( FAILED( rd->SetCurrentMediaType( (DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, nullptr, mt ) ) ) { err = "cannot decode to PCM"; break; }
-		Rel( mt );
-		if( FAILED( rd->GetCurrentMediaType( (DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, &mt ) ) ) break;
-		UINT32 rate = 0, ch = 0;
-		mt->GetUINT32( MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate );
-		mt->GetUINT32( MF_MT_AUDIO_NUM_CHANNELS, &ch );
-		if( !rate || !ch ) { err = "unknown format"; break; }
-		out.rate = (int)rate;
-		out.ch   = (int)ch;
-		for( ;; )
-		{
-			DWORD flags   = 0;
-			IMFSample* sm = nullptr;
-			if( FAILED( rd->ReadSample( (DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, nullptr, &flags, nullptr, &sm ) ) ) break;
-			if( sm )
-			{
-				IMFMediaBuffer* b = nullptr;
-				if( SUCCEEDED( sm->ConvertToContiguousBuffer( &b ) ) )
-				{
-					BYTE* p  = nullptr;
-					DWORD n  = 0;
-					if( SUCCEEDED( b->Lock( &p, nullptr, &n ) ) )
-					{
-						const int16_t* s = (const int16_t*)p;
-						out.pcm.insert( out.pcm.end(), s, s + n / 2 );
-						b->Unlock();
-					}
-					b->Release();
-				}
-				sm->Release();
-			}
-			if( flags & MF_SOURCE_READERF_ENDOFSTREAM ) break;
-			if( out.pcm.size() > (size_t)rate * ch * 60 * 120 ) break;//2 hours
-		}
-		ok = !out.pcm.empty();
-		if( !ok ) err = "no audio data";
-	} while( false );
-	Rel( mt );
-	Rel( rd );
-	if( SUCCEEDED( co ) ) CoUninitialize();
-	if( !ok ) return false;
+	if( !DecodeAudioFile( file, out, err ) ) return false;
 	const size_t frames = out.pcm.size() / out.ch;
 	out.peaks.resize( ( frames + out.peakStep - 1 ) / out.peakStep );
 	for( size_t i = 0; i < out.peaks.size(); ++i )
@@ -117,84 +48,16 @@ void AudioPlayer::Play( double sec )
 	rate_     = data_->rate;
 	th_       = std::thread( [ this, sec ] { Loop( sec ); } );
 }
-void AudioPlayer::Stop()
+void AudioPlayer::Fill( int16_t* o, int frames, int ch, long long& cur, const AudioData& d ) const
 {
-	run_ = false;
-	if( HWAVEOUT w = (HWAVEOUT)dev_.load() ) waveOutReset( w );
-	if( th_.joinable() ) th_.join();
-}
-double AudioPlayer::Position() const
-{
-	if( !run_ ) return startSec_;
-	double frames = (double)played_;
-	if( HWAVEOUT w = (HWAVEOUT)dev_.load() )
-	{
-		MMTIME t{};
-		t.wType = TIME_SAMPLES;
-		if( waveOutGetPosition( w, &t, sizeof( t ) ) == MMSYSERR_NOERROR && t.wType == TIME_SAMPLES ) frames = t.u.sample;
-	}
-	return startSec_ + frames / std::max( 1, rate_ );
-}
-void AudioPlayer::Loop( double sec )
-{
-	std::shared_ptr< const AudioData > d = data_;
-	const int ch = std::min( 2, d->ch ), rate = d->rate;
-	WAVEFORMATEX wf{};
-	wf.wFormatTag      = WAVE_FORMAT_PCM;
-	wf.nChannels       = (WORD)ch;
-	wf.nSamplesPerSec  = rate;
-	wf.wBitsPerSample  = 16;
-	wf.nBlockAlign     = (WORD)( ch * 2 );
-	wf.nAvgBytesPerSec = rate * wf.nBlockAlign;
-	HANDLE ev          = CreateEventW( nullptr, FALSE, FALSE, nullptr );
-	HWAVEOUT w         = nullptr;
-	if( waveOutOpen( &w, WAVE_MAPPER, &wf, (DWORD_PTR)ev, 0, CALLBACK_EVENT ) != MMSYSERR_NOERROR )
-	{
-		error = "no audio output";
-		CloseHandle( ev );
-		run_ = false;
-		return;
-	}
-	dev_ = w;
-	const int kBufs = 4, kFrames = 2048;
-	std::vector< int16_t > mem( (size_t)kBufs * kFrames * ch );
-	WAVEHDR hdr[ kBufs ]{};
-	long long cur = (long long)llround( sec * rate );//frame in the file (negative = silence)
-	auto fill     = [ & ]( int i ) {
-		int16_t* o    = mem.data() + (size_t)i * kFrames * ch;
-		const float g = gain_;
-		for( int k = 0; k < kFrames; ++k, ++cur )
-			for( int c = 0; c < ch; ++c )
-			{
-				int v = 0;
-				if( cur >= 0 && (size_t)cur * d->ch + c < d->pcm.size() ) v = (int)lroundf( d->pcm[ (size_t)cur * d->ch + std::min( c, d->ch - 1 ) ] * g );
-				o[ k * ch + c ] = (int16_t)Clamp( v, -32768, 32767 );
-			}
-		hdr[ i ].lpData         = (LPSTR)o;
-		hdr[ i ].dwBufferLength = kFrames * ch * 2;
-		hdr[ i ].dwFlags        = 0;
-		waveOutPrepareHeader( w, &hdr[ i ], sizeof( WAVEHDR ) );
-		waveOutWrite( w, &hdr[ i ], sizeof( WAVEHDR ) );
-	};
-	for( int i = 0; i < kBufs; ++i ) fill( i );
-	while( run_ )
-	{
-		WaitForSingleObject( ev, 50 );
-		for( int i = 0; i < kBufs && run_; ++i )
-			if( hdr[ i ].dwFlags & WHDR_DONE )
-			{
-				waveOutUnprepareHeader( w, &hdr[ i ], sizeof( WAVEHDR ) );
-				played_ += kFrames;
-				if( cur > (long long)( d->pcm.size() / d->ch ) + rate ) continue;//past the end: let it run out
-				fill( i );
-			}
-	}
-	waveOutReset( w );
-	for( int i = 0; i < kBufs; ++i )
-		if( hdr[ i ].dwFlags & WHDR_PREPARED ) waveOutUnprepareHeader( w, &hdr[ i ], sizeof( WAVEHDR ) );
-	dev_ = nullptr;
-	waveOutClose( w );
-	CloseHandle( ev );
+	const float g = gain_;
+	for( int k = 0; k < frames; ++k, ++cur )
+		for( int c = 0; c < ch; ++c )
+		{
+			int v = 0;
+			if( cur >= 0 && (size_t)cur * d.ch + c < d.pcm.size() ) v = (int)lroundf( d.pcm[ (size_t)cur * d.ch + std::min( c, d.ch - 1 ) ] * g );
+			o[ k * ch + c ] = (int16_t)Clamp( v, -32768, 32767 );
+		}
 }
 
 //================================================================ LTC
@@ -337,17 +200,6 @@ void LtcEncode( int h, int m, int s, int f, int fps, int rate, int frames, float
 	}
 }
 
-std::vector< std::string > LtcInput::Devices()
-{
-	std::vector< std::string > v;
-	const UINT n = waveInGetNumDevs();
-	for( UINT i = 0; i < n; ++i )
-	{
-		WAVEINCAPSW c{};
-		if( waveInGetDevCapsW( i, &c, sizeof( c ) ) == MMSYSERR_NOERROR ) v.push_back( Narrow( c.szPname ) );
-	}
-	return v;
-}
 bool LtcInput::Start( const std::string& device, int channel )
 {
 	Stop();
@@ -388,67 +240,22 @@ bool LtcInput::Get( double& sec, int& fps, double& at ) const
 	at  = at_;
 	return true;
 }
-void LtcInput::Loop( int devIdx )
+void LtcInput::Process( const int16_t* s, int n, int ch, LtcDecoder& dec, std::vector< float >& x )
 {
-	const int rate = 48000, ch = 2;
-	WAVEFORMATEX wf{};
-	wf.wFormatTag      = WAVE_FORMAT_PCM;
-	wf.nChannels       = ch;
-	wf.nSamplesPerSec  = rate;
-	wf.wBitsPerSample  = 16;
-	wf.nBlockAlign     = ch * 2;
-	wf.nAvgBytesPerSec = rate * wf.nBlockAlign;
-	HANDLE ev          = CreateEventW( nullptr, FALSE, FALSE, nullptr );
-	HWAVEIN w          = nullptr;
-	if( waveInOpen( &w, devIdx < 0 ? WAVE_MAPPER : (UINT)devIdx, &wf, (DWORD_PTR)ev, 0, CALLBACK_EVENT ) != MMSYSERR_NOERROR )
+	if( (int)x.size() < n ) x.resize( n );
+	float pk = 0;
+	for( int k = 0; k < n; ++k )
 	{
-		error = "cannot open the audio input";
-		CloseHandle( ev );
-		run_ = false;
-		return;
+		x[ k ] = s[ k * ch + Clamp( chan_, 0, ch - 1 ) ] / 32768.0f;
+		pk     = std::max( pk, fabsf( x[ k ] ) );
 	}
-	const int kBufs = 6, kFrames = 480;//10 ms blocks
-	std::vector< int16_t > mem( (size_t)kBufs * kFrames * ch );
-	WAVEHDR hdr[ kBufs ]{};
-	for( int i = 0; i < kBufs; ++i )
+	level_ = std::max( pk, level_ * 0.8f );
+	if( dec.Feed( x.data(), n ) > 0 )
 	{
-		hdr[ i ].lpData         = (LPSTR)( mem.data() + (size_t)i * kFrames * ch );
-		hdr[ i ].dwBufferLength = kFrames * ch * 2;
-		waveInPrepareHeader( w, &hdr[ i ], sizeof( WAVEHDR ) );
-		waveInAddBuffer( w, &hdr[ i ], sizeof( WAVEHDR ) );
+		std::lock_guard< std::mutex > l( mx_ );
+		sec_ = dec.Seconds();
+		fps_ = dec.fps;
+		at_  = Now();
 	}
-	waveInStart( w );
-	LtcDecoder dec;
-	dec.Reset( rate );
-	std::vector< float > x( kFrames );
-	while( run_ )
-	{
-		WaitForSingleObject( ev, 50 );
-		for( int i = 0; i < kBufs && run_; ++i )
-		{
-			if( !( hdr[ i ].dwFlags & WHDR_DONE ) ) continue;
-			const int16_t* s = (const int16_t*)hdr[ i ].lpData;
-			const int n      = (int)hdr[ i ].dwBytesRecorded / ( ch * 2 );
-			float pk         = 0;
-			for( int k = 0; k < n; ++k )
-			{
-				x[ k ] = s[ k * ch + Clamp( chan_, 0, ch - 1 ) ] / 32768.0f;
-				pk     = std::max( pk, fabsf( x[ k ] ) );
-			}
-			level_ = std::max( pk, level_ * 0.8f );
-			if( dec.Feed( x.data(), n ) > 0 )
-			{
-				std::lock_guard< std::mutex > l( mx_ );
-				sec_ = dec.Seconds();
-				fps_ = dec.fps;
-				at_  = Now();
-			}
-			waveInAddBuffer( w, &hdr[ i ], sizeof( WAVEHDR ) );
-		}
-	}
-	waveInReset( w );
-	for( int i = 0; i < kBufs; ++i ) waveInUnprepareHeader( w, &hdr[ i ], sizeof( WAVEHDR ) );
-	waveInClose( w );
-	CloseHandle( ev );
 }
 }//namespace ls

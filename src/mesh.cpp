@@ -4,9 +4,11 @@
 #include "../third_party/stb_image.h"
 #include <filesystem>
 #include <map>
+#ifdef _WIN32
 #include <windows.h>
 #include <wincodec.h>
 #pragma comment( lib, "windowscodecs.lib" )
+#endif
 
 namespace ls
 {
@@ -25,6 +27,7 @@ int MeshData::Textured() const
 	return n;
 }
 
+#ifdef _WIN32
 //Windows Imaging Component: TIF/TIFF, BMP variants, ICO, JPEG-XR, DDS (Win10+), HEIC/WEBP when the codec is installed
 static bool DecodeWic( const uint8_t* data, size_t size, int& w, int& h, std::vector< uint8_t >& rgba )
 {
@@ -61,6 +64,10 @@ static bool DecodeWic( const uint8_t* data, size_t size, int& w, int& h, std::ve
 	if( SUCCEEDED( co ) ) CoUninitialize();
 	return ok;
 }
+bool DecodeImageOs( const uint8_t* data, size_t size, int& w, int& h, std::vector< uint8_t >& rgba ) { return DecodeWic( data, size, w, h, rgba ); }
+#elif !defined( __APPLE__ )
+bool DecodeImageOs( const uint8_t*, size_t, int&, int&, std::vector< uint8_t >& ) { return false; }
+#endif//macOS: ImageIO in image_mac.mm
 
 bool DecodeImage( const uint8_t* data, size_t size, MeshImage& out )
 {
@@ -71,7 +78,7 @@ bool DecodeImage( const uint8_t* data, size_t size, MeshImage& out )
 		img.assign( px, px + (size_t)w * h * 4 );
 		stbi_image_free( px );
 	}
-	else if( !DecodeWic( data, size, w, h, img ) )
+	else if( !DecodeImageOs( data, size, w, h, img ) )
 		return false;
 	//very large textures: halve until the long side fits 4096 (keeps memory and upload time sane)
 	while( std::max( w, h ) > 4096 )
@@ -156,18 +163,25 @@ static MeshImage MergeOpacity( const MeshImage* col, const MeshImage& op )
 }
 
 namespace fs = std::filesystem;
+#ifdef _WIN32
+static std::string PathStr( const fs::path& p ) { return Narrow( p.wstring() ); }
+static const char kSep = '\\';
+#else
+static std::string PathStr( const fs::path& p ) { return p.u8string(); }
+static const char kSep = '/';
+#endif
 static bool ReadPath( const fs::path& p, std::vector< uint8_t >& out )
 {
 	std::error_code ec;
 	if( !fs::is_regular_file( p, ec ) ) return false;
-	return ReadFile( Narrow( p.wstring() ), out );
+	return ReadFile( PathStr( p ), out );
 }
 bool FindTextureFile( const std::string& modelDir, const std::string& ref, std::vector< uint8_t >& bytes, std::string* foundPath )
 {
 	if( ref.empty() ) return false;
 	auto done = [ & ]( const fs::path& p ) {
 		if( !ReadPath( p, bytes ) ) return false;
-		if( foundPath ) *foundPath = Narrow( p.wstring() );
+		if( foundPath ) *foundPath = PathStr( p );
 		return true;
 	};
 	std::error_code ec;
@@ -177,8 +191,8 @@ bool FindTextureFile( const std::string& modelDir, const std::string& ref, std::
 	for( const char* pre : { "asset:///", "asset://", "file:///", "file://" } )
 		if( ToLower( clean ).rfind( pre, 0 ) == 0 ) { clean = clean.substr( strlen( pre ) ); break; }
 	for( auto& c : clean )
-		if( c == '/' ) c = '\\';
-	if( clean.find( ':' ) != std::string::npos || ( clean.size() > 1 && clean[ 0 ] == '\\' ) )
+		if( c == '/' || c == '\\' ) c = kSep;
+	if( clean.find( ':' ) != std::string::npos || ( clean.size() > 1 && clean[ 0 ] == kSep ) )
 	{
 		if( done( fs::u8path( clean ) ) ) return true;
 	}
@@ -190,7 +204,11 @@ bool FindTextureFile( const std::string& modelDir, const std::string& ref, std::
 		std::string st = FileStem( names[ 0 ] ), ext = names[ 0 ].substr( st.size() );
 		if( !st.empty() && st.back() == '~' ) names.push_back( st.substr( 0, st.size() - 1 ) + ext );
 	}
+#ifdef _WIN32
 	static const char* subs[] = { "", "tex", "textures", "Textures", "texture", "maps", "Maps", "images", "materials", "..\\textures", "..\\tex" };
+#else
+	static const char* subs[] = { "", "tex", "textures", "Textures", "texture", "maps", "Maps", "images", "materials", "../textures", "../tex" };
+#endif
 	for( auto& n : names )
 		for( const char* sd : subs )
 			if( done( dir / fs::u8path( sd ) / fs::u8path( n ) ) ) return true;
@@ -210,7 +228,7 @@ bool FindTextureFile( const std::string& modelDir, const std::string& ref, std::
 		++seen;
 		if( it.depth() > 2 ) { it.disable_recursion_pending(); continue; }
 		if( !it->is_regular_file( ec ) ) continue;
-		const std::string fn = ToLower( Narrow( it->path().filename().wstring() ) );
+		const std::string fn = ToLower( PathStr( it->path().filename() ) );
 		for( size_t k = 0; k < lnames.size(); ++k )
 		{
 			if( fn == lnames[ k ] && done( it->path() ) ) return true;

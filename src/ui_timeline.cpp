@@ -3,7 +3,6 @@
 #include "app.h"
 #include "imgui.h"
 #include "sim.h"
-#include <windows.h>
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -674,9 +673,7 @@ void App::BuildTimelineDemo()
 	}
 	//audio: a generated click track (125 BPM) in the temp folder
 	{
-		wchar_t tmp[ MAX_PATH ];
-		GetTempPathW( MAX_PATH, tmp );
-		const std::string wav = Narrow( tmp ) + "lightstage_demo_click.wav";
+		const std::string wav = TempDir() + "lightstage_demo_click.wav";
 		const int rate = 22050, n = (int)( rate * tl.length );
 		std::vector< int16_t > pcm( n );
 		const double spb = 60.0 / tl.bpm;

@@ -10,8 +10,6 @@
 #include <map>
 #include <random>
 #include <unordered_map>
-#include <windows.h>
-#include <shlobj.h>
 
 namespace ls
 {
@@ -751,16 +749,17 @@ std::string ResolumePresetXml( const std::vector< ResolumeScreen >& screens, con
 
 std::string ResolumePresetDir()
 {
-	wchar_t p[ MAX_PATH ] = {};
-	if( FAILED( SHGetFolderPathW( nullptr, CSIDL_PERSONAL, nullptr, 0, p ) ) ) return "";
-	return Narrow( p ) + "\\Resolume Arena\\Presets\\Advanced Output";
+	//Windows and macOS: <Documents>/Resolume Arena/Presets/Advanced Output
+	const std::string d = DocumentsDir();
+	if( d.empty() ) return "";
+	return d + LS_SEP "Resolume Arena" LS_SEP "Presets" LS_SEP "Advanced Output";
 }
 
 bool WriteResolumePreset( const std::string& path, const std::string& xml, std::string& err )
 {
 	const size_t sl = path.find_last_of( "\\/" );
-	if( sl != std::string::npos ) SHCreateDirectoryExW( nullptr, Widen( path.substr( 0, sl ) ).c_str(), nullptr );
-	FILE* f = _wfopen( Widen( path ).c_str(), L"wb" );
+	if( sl != std::string::npos ) MakeDirs( path.substr( 0, sl ) );
+	FILE* f = FOpen( path, "wb" );
 	if( !f )
 	{
 		err = L( "Datei kann nicht geschrieben werden" );

@@ -1,8 +1,6 @@
 #include "osc.h"
 #include "params.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
+#include "netsock.h"
 #include <cstring>
 
 namespace ls
@@ -131,25 +129,18 @@ bool OscIn::Start( int port )
 {
 	Stop();
 	error.clear();
-	WSADATA wd;
-	WSAStartup( MAKEWORD( 2, 2 ), &wd );
-	SOCKET s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-	if( s == INVALID_SOCKET ) { error = L( "kein Socket" ); return false; }
-	sockaddr_in a{};
-	a.sin_family      = AF_INET;
-	a.sin_port        = htons( (u_short)port );
-	a.sin_addr.s_addr = htonl( INADDR_ANY );
-	if( bind( s, (sockaddr*)&a, sizeof( a ) ) != 0 )
+	net::Startup();
+	net::Sock s = net::Udp();
+	if( s == net::kInvalid ) { error = L( "kein Socket" ); return false; }
+	if( !net::Bind( s, net::Addr( htonl( INADDR_ANY ), (uint16_t)port ) ) )
 	{
-		closesocket( s );
+		net::Close( s );
 		error = "Port " + std::to_string( port ) + L( " ist belegt" );
 		return false;
 	}
-	DWORD tmo = 200;//so the thread notices Stop()
-	setsockopt( s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof( tmo ) );
-	int rb = 1 << 20;
-	setsockopt( s, SOL_SOCKET, SO_RCVBUF, (const char*)&rb, sizeof( rb ) );
-	sock_ = (uintptr_t)s;
+	net::SetRecvTimeout( s, 200 );//so the thread notices Stop()
+	net::SetRecvBuffer( s, 1 << 20 );
+	sock_ = net::ToU( s );
 	port_ = port;
 	run_  = true;
 	th_   = std::thread( [ this ] { Loop(); } );
@@ -162,7 +153,7 @@ void OscIn::Stop()
 	if( !run_ && sock_ == ~(uintptr_t)0 ) return;
 	run_ = false;
 	if( th_.joinable() ) th_.join();
-	if( sock_ != ~(uintptr_t)0 ) closesocket( (SOCKET)sock_ );
+	net::Close( net::FromU( sock_ ) );
 	sock_ = ~(uintptr_t)0;
 	port_ = 0;
 }
@@ -173,8 +164,7 @@ void OscIn::Loop()
 	while( run_ )
 	{
 		sockaddr_in from{};
-		int fromLen = sizeof( from );
-		int n       = recvfrom( (SOCKET)sock_, (char*)buf.data(), (int)buf.size(), 0, (sockaddr*)&from, &fromLen );
+		int n = net::RecvFrom( net::FromU( sock_ ), buf.data(), (int)buf.size(), &from );
 		if( n <= 0 ) continue;
 		std::vector< OscMsg > ms;
 		if( !ParseOsc( buf.data(), n, ms ) ) { ++bad; continue; }
@@ -186,7 +176,7 @@ void OscIn::Loop()
 		std::lock_guard< std::mutex > l( lock_ );
 		for( auto& m : ms )
 			if( queue_.size() < 16384 ) queue_.push_back( std::move( m ) );
-		if( wake ) SetEvent( (HANDLE)wake );
+		if( wake ) EventSignal( wake );
 	}
 }
 

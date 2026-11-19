@@ -1,62 +1,50 @@
+#include "platform.h"
 #include "midi.h"
 #include "params.h"
-#include <windows.h>
-#include <mmsystem.h>
+#include <thread>
 
 namespace ls
 {
-static void CALLBACK MidiProc( HMIDIIN, UINT msg, DWORD_PTR inst, DWORD_PTR p1, DWORD_PTR )
+void MidiIn::OnShort( int dev, uint32_t msg, double t )
 {
-	if( msg != MIM_DATA ) return;
-	auto* ctx = (std::pair< MidiIn*, int >*)inst;
-	std::lock_guard< std::mutex > l( ctx->first->lock_ );
-	if( ctx->first->queue_.size() < 8192 )
-		ctx->first->queue_.push_back( { ctx->second, (uint32_t)p1, Now() } );
-	if( ctx->first->wake ) SetEvent( (HANDLE)ctx->first->wake );
+	std::lock_guard< std::mutex > l( lock_ );
+	if( queue_.size() < 8192 ) queue_.push_back( { dev, msg, t } );
+	if( wake )
+	{
+		if( wakeFn ) wakeFn( wake );
+		else EventSignal( wake );
+	}
 }
-
-static std::vector< std::pair< MidiIn*, int >* > g_ctx;
+void MidiIn::OnSysEx( int, const uint8_t*, size_t, double )
+{
+	//SysEx input is not mapped (and never delivered by the winmm backend)
+}
 
 void MidiIn::Open()
 {
 	Close();
-	UINT n = midiInGetNumDevs();
-	for( UINT i = 0; i < n; ++i )
+	const auto names = midiport::InputNames();
+	for( int i = 0; i < (int)names.size(); ++i )
 	{
-		MIDIINCAPSA caps{};
-		midiInGetDevCapsA( i, &caps, sizeof( caps ) );
-		auto* ctx = new std::pair< MidiIn*, int >( this, (int)devices.size() );
-		HMIDIIN h = nullptr;
-		if( midiInOpen( &h, i, (DWORD_PTR)MidiProc, (DWORD_PTR)ctx, CALLBACK_FUNCTION ) == MMSYSERR_NOERROR )
+		if( void* h = midiport::OpenInput( i, (int)devices.size(), this ) )
 		{
-			midiInStart( h );
 			handles_.push_back( h );
-			devices.push_back( caps.szPname );
-			g_ctx.push_back( ctx );
-			Log( "midi in: opened %s", caps.szPname );
+			devices.push_back( names[ i ] );
+			Log( "midi in: opened %s", names[ i ].c_str() );
 		}
 		else
 		{
-			failed.push_back( caps.szPname );
-			delete ctx;
-			Log( "midi in: cannot open %s (in use?)", caps.szPname );
+			failed.push_back( names[ i ] );
+			Log( "midi in: cannot open %s (in use?)", names[ i ].c_str() );
 		}
 	}
 }
 void MidiIn::Close()
 {
-	for( void* h : handles_ )
-	{
-		midiInStop( (HMIDIIN)h );
-		midiInReset( (HMIDIIN)h );
-		midiInClose( (HMIDIIN)h );
-	}
+	for( void* h : handles_ ) midiport::CloseInput( h );
 	handles_.clear();
 	devices.clear();
 	failed.clear();
-	for( auto*& c : g_ctx )
-		if( c && c->first == this ) { delete c; c = nullptr; }
-	g_ctx.erase( std::remove( g_ctx.begin(), g_ctx.end(), nullptr ), g_ctx.end() );
 	std::lock_guard< std::mutex > l( lock_ );
 	queue_.clear();
 }
@@ -172,33 +160,53 @@ void MidiIn::Poll( std::vector< MidiEvent >& out )
 
 std::vector< std::string > MidiIn::OutputPorts()
 {
-	std::vector< std::string > r;
-	UINT n = midiOutGetNumDevs();
-	for( UINT i = 0; i < n; ++i )
-	{
-		MIDIOUTCAPSA c{};
-		midiOutGetDevCapsA( i, &c, sizeof( c ) );
-		r.push_back( c.szPname );
-	}
-	return r;
+	return midiport::OutputNames();
+}
+static int FindOutput( const std::string& sub )
+{
+	const auto names = midiport::OutputNames();
+	for( int i = 0; i < (int)names.size(); ++i )
+		if( ToLower( names[ i ] ).find( ToLower( sub ) ) != std::string::npos ) return i;
+	return -1;
 }
 bool MidiIn::SendShort( const std::string& sub, uint8_t st, uint8_t d1, uint8_t d2 )
 {
-	UINT n = midiOutGetNumDevs();
-	for( UINT i = 0; i < n; ++i )
-	{
-		MIDIOUTCAPSA c{};
-		midiOutGetDevCapsA( i, &c, sizeof( c ) );
-		if( ToLower( c.szPname ).find( ToLower( sub ) ) == std::string::npos ) continue;
-		HMIDIOUT h = nullptr;
-		if( midiOutOpen( &h, i, 0, 0, CALLBACK_NULL ) != MMSYSERR_NOERROR ) return false;
-		midiOutShortMsg( h, st | ( d1 << 8 ) | ( d2 << 16 ) );
-		Sleep( 5 );
-		midiOutClose( h );
-		return true;
-	}
-	return false;
+	const int i = FindOutput( sub );
+	if( i < 0 ) return false;
+	void* h = midiport::OpenOutput( i );
+	if( !h ) return false;
+	midiport::SendShort( h, st, d1, d2 );
+	std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
+	midiport::CloseOutput( h );
+	return true;
 }
+bool MidiIn::SendSysEx( const std::string& sub, const std::vector< uint8_t >& data )
+{
+	const int i = FindOutput( sub );
+	if( i < 0 ) return false;
+	void* h = midiport::OpenOutput( i );
+	if( !h ) return false;
+	const bool ok = midiport::SendSysEx( h, data.data(), data.size() );
+	midiport::CloseOutput( h );
+	return ok;
+}
+
+bool MidiOut::Open( const std::string& sub )
+{
+	Close();
+	const auto names = midiport::OutputNames();
+	for( int i = 0; i < (int)names.size() && !h_; ++i )
+		if( ToLower( names[ i ] ).find( ToLower( sub ) ) != std::string::npos && ( h_ = midiport::OpenOutput( i ) ) ) name = names[ i ];
+	return h_ != nullptr;
+}
+void MidiOut::Close()
+{
+	if( h_ ) midiport::CloseOutput( h_ );
+	h_ = nullptr;
+	name.clear();
+}
+bool MidiOut::Send( uint8_t st, uint8_t d1, uint8_t d2 ) { return midiport::SendShort( h_, st, d1, d2 ); }
+bool MidiOut::SendSysEx( const std::vector< uint8_t >& data ) { return midiport::SendSysEx( h_, data.data(), data.size() ); }
 
 bool MidiMatches( const MidiMap& m, const MidiEvent& e )
 {
@@ -274,4 +282,20 @@ int ApplyMidi( Show& show, const MidiEvent& e )
 	}
 	return hits;
 }
+
+#if !defined( _WIN32 ) && !defined( __APPLE__ )
+//no MIDI backend on this platform (Linux build): empty device lists
+namespace midiport
+{
+std::vector< std::string > InputNames() { return {}; }
+std::vector< std::string > OutputNames() { return {}; }
+void* OpenInput( int, int, Sink* ) { return nullptr; }
+void CloseInput( void* ) {}
+void* OpenOutput( int ) { return nullptr; }
+bool SendShort( void*, uint8_t, uint8_t, uint8_t ) { return false; }
+bool SendSysEx( void*, const uint8_t*, size_t ) { return false; }
+void CloseOutput( void* ) {}
+void SignalWake( void* ) {}
+}//namespace midiport
+#endif
 }//namespace ls

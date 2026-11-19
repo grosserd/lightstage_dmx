@@ -8,6 +8,9 @@
 
 cmake_minimum_required( VERSION 3.26 )
 project( LightStage VERSION 2.1 LANGUAGES C CXX )
+if( APPLE )
+	enable_language( OBJCXX )#media backends (video_mac.mm, audio_mac.mm, image_mac.mm)
+endif()
 
 set( CMAKE_CXX_STANDARD 17 )
 set( CMAKE_CXX_STANDARD_REQUIRED ON )
@@ -62,14 +65,43 @@ endif()
 #---- LightStage
 set( LS_SOURCES
 	src/common.cpp src/i18n.cpp src/json.cpp src/xmlzip.cpp src/fixture.cpp src/fixture_editor.cpp src/fixture_editor_ui.cpp
-	src/show.cpp src/sim.cpp src/dmxio.cpp src/midi.cpp src/osc.cpp src/bridge.cpp src/miditargets.cpp src/video.cpp
+	src/show.cpp src/sim.cpp src/dmxio.cpp src/midi.cpp src/osc.cpp src/bridge.cpp src/netsock.cpp src/miditargets.cpp src/video.cpp
 	src/effects.cpp src/timeline.cpp src/lbshow.cpp src/audio.cpp src/params.cpp src/mesh.cpp src/render.cpp src/app.cpp
 	src/ui_tabs.cpp src/ui_effects.cpp src/ui_timeline.cpp src/demo.cpp src/resolume.cpp src/ui_resolume.cpp
 	src/selftest.cpp src/uitest.cpp src/main.cpp src/tp_impl.cpp )
+#platform layer (dialogs, window, priorities): Win32 / Cocoa
+if( WIN32 )
+	list( APPEND LS_SOURCES src/platform_win.cpp )
+elseif( APPLE )
+	enable_language( OBJCXX )
+	list( APPEND LS_SOURCES src/platform_mac.mm )
+	set_source_files_properties( src/platform_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc" )
+endif()
+#serial port for USB-DMX (Enttec DMX USB Pro): Win32 COM port / termios
+if( WIN32 )
+	list( APPEND LS_SOURCES src/serial_win.cpp )
+else()
+	list( APPEND LS_SOURCES src/serial_posix.cpp )
+endif()
+#media backends: Windows = Media Foundation / waveOut / waveIn / WIC, macOS = AVFoundation / AudioQueue / ImageIO
+if( WIN32 )
+	list( APPEND LS_SOURCES src/video_win.cpp src/audio_win.cpp )
+elseif( APPLE )
+	set( LS_MAC_MEDIA src/video_mac.mm src/audio_mac.mm src/image_mac.mm )
+	set_source_files_properties( ${LS_MAC_MEDIA} PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations" )
+	list( APPEND LS_SOURCES ${LS_MAC_MEDIA} )
+endif()
 if( WIN32 )
 	add_executable( LightStage WIN32 ${LS_SOURCES} src/app.rc )
 else()
 	add_executable( LightStage ${LS_SOURCES} )
+endif()
+#MIDI port backend (midi_port.h): winmm / CoreMIDI; other platforms use the empty fallback in midi.cpp
+if( WIN32 )
+	target_sources( LightStage PRIVATE src/midi_win.cpp )
+elseif( APPLE )
+	target_sources( LightStage PRIVATE src/midi_mac.cpp )
+	target_link_libraries( LightStage PRIVATE "-framework CoreMIDI" "-framework CoreFoundation" )
 endif()
 target_include_directories( LightStage PRIVATE src ${TP} ${CMAKE_CURRENT_SOURCE_DIR} )#root: app.rc finds assets\lightstage.ico
 target_link_libraries( LightStage PRIVATE ls_imgui ls_glew glfw ls_ufbx ls_link )
@@ -79,12 +111,20 @@ foreach( cfg Debug Release RelWithDebInfo MinSizeRel )
 	set_target_properties( LightStage PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${CFG} ${OUT_DIR} )
 endforeach()
 
+if( APPLE )
+	target_link_libraries( LightStage PRIVATE "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo" "-framework AudioToolbox"
+		"-framework CoreAudio" "-framework ImageIO" "-framework CoreGraphics" "-framework Foundation" )
+endif()
 if( MSVC )
 	target_compile_definitions( LightStage PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS )
 	target_compile_options( LightStage PRIVATE /utf-8 /W3 /wd4996 /wd4244 /wd4267 /wd4305 /MP /EHsc )
 	target_link_libraries( LightStage PRIVATE ws2_32 winmm setupapi comdlg32 user32 gdi32 shell32 advapi32 dwmapi
 		mfplat mfreadwrite mfuuid ole32 avrt powrprof iphlpapi windowscodecs dbghelp )
 	target_link_options( LightStage PRIVATE /OPT:REF /OPT:ICF )
+endif()
+if( APPLE )
+	target_link_libraries( LightStage PRIVATE "-framework Cocoa" "-framework UniformTypeIdentifiers" )
+	target_link_libraries( LightStage PRIVATE "-framework IOKit" "-framework CoreFoundation" )#serial port list (serial_posix.cpp)
 endif()
 
 #program data next to the program (ExeDir): fonts / icon and the fixture library

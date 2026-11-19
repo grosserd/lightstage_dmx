@@ -1,10 +1,9 @@
 #include "i18n.h"
+#include "common.h"
 #include <cstring>
 #include <string_view>
 #include <mutex>
 #include <unordered_map>
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 namespace ls
 {
 int gLang = kLangEn;
@@ -48,8 +47,7 @@ const wchar_t* TrW( const wchar_t* de, size_t len )
 	std::wstring key( de, len );
 	auto it = cache.find( key );
 	if( it != cache.end() ) return it->second.empty() ? de : it->second.c_str();
-	std::string u( len ? WideCharToMultiByte( CP_UTF8, 0, de, (int)len, nullptr, 0, nullptr, nullptr ) : 0, '\0' );
-	if( len ) WideCharToMultiByte( CP_UTF8, 0, de, (int)len, &u[ 0 ], (int)u.size(), nullptr, nullptr );
+	const std::string u = Narrow( key );//keeps the inner \0
 	const auto& m = Map();
 	auto t        = m.find( std::string_view( u ) );
 	std::wstring w;
@@ -61,8 +59,7 @@ const wchar_t* TrW( const wchar_t* de, size_t len )
 		if( !u.empty() && u.back() == '\0' )
 			while( e[ n + 1 ] ) n += 1 + strlen( e + n + 1 );
 		if( !u.empty() && u.back() == '\0' ) ++n;
-		w.resize( MultiByteToWideChar( CP_UTF8, 0, e, (int)n, nullptr, 0 ) );
-		MultiByteToWideChar( CP_UTF8, 0, e, (int)n, &w[ 0 ], (int)w.size() );
+		w = Widen( std::string( e, n ) );
 	}
 	auto& r = cache[ key ] = w;
 	return r.empty() ? de : r.c_str();

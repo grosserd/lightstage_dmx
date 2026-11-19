@@ -34,7 +34,9 @@ MeshData MakeCylinder( int seg );       //radius 0.5, y -0.5..0.5, capped
 MeshData MakeCone( int seg );           //apex at origin, opens along +Z, radius 1 at z = 1, capped
 MeshData MakeQuad();                    //-1..1 xy, for billboards / fullscreen
 bool LoadModel( const std::string& path, MeshData& out, std::string* err );
-bool DecodeImage( const uint8_t* data, size_t size, MeshImage& out );//stb_image, then Windows WIC (TIF, DDS, ...)
+bool DecodeImage( const uint8_t* data, size_t size, MeshImage& out );//stb_image, then the OS decoder (TIF, DDS, ...)
+//OS image decoder, rows top-down straight RGBA: Windows WIC (mesh.cpp), macOS ImageIO (image_mac.mm)
+bool DecodeImageOs( const uint8_t* data, size_t size, int& w, int& h, std::vector< uint8_t >& rgba );
 //looks for a texture referenced by a model: as given, next to the model, in texture subfolders, by name in the model folder tree
 bool FindTextureFile( const std::string& modelDir, const std::string& ref, std::vector< uint8_t >& bytes, std::string* foundPath = nullptr );
 }//namespace ls

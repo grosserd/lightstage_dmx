@@ -3,41 +3,23 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "json.h"
+#include "platform.h"
 #include <algorithm>
-#include <windows.h>
-#include <commdlg.h>
-#include <shellapi.h>
 #include <map>
-#include <mmsystem.h>
-#include <avrt.h>
-#include <powrprof.h>
 
 namespace ls
 {
 static const char* QualityName( int q ) { return q <= 0 ? L( "Entwurf" ) : q == 1 ? L( "Normal" ) : L( "Hoch" ); }
 //---------------------------------------------------------------- file dialogs
-static std::string FileDialog( void* hwnd, bool save, const wchar_t* filter, const wchar_t* defExt, const std::string& initial = "" )
+//filter: \0 list "Label\0*.a;*.b\0...\0" (translated with L() where it has German text)
+static std::string FileDialog( bool save, const char* filter, const char* defExt, const std::string& initial = "" )
 {
-	wchar_t buf[ MAX_PATH * 4 ] = {};
-	if( !initial.empty() )
-	{
-		std::wstring w = Widen( initial );
-		wcsncpy( buf, w.c_str(), MAX_PATH * 4 - 1 );
-	}
-	OPENFILENAMEW of{};
-	of.lStructSize = sizeof( of );
-	of.hwndOwner   = (HWND)hwnd;
-	of.lpstrFilter = filter;
-	of.lpstrFile   = buf;
-	of.nMaxFile    = MAX_PATH * 4;
-	of.lpstrDefExt = defExt;
-	of.Flags       = OFN_NOCHANGEDIR | OFN_EXPLORER | ( save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST );
-	BOOL ok        = save ? GetSaveFileNameW( &of ) : GetOpenFileNameW( &of );
-	return ok ? Narrow( buf ) : std::string();
+	const FileFilters f = FilterList( filter );
+	return save ? SaveFileDialog( f, defExt, initial ) : OpenFileDialog( f, defExt, initial );
 }
-#define kShowFilter LW( L"LightStage Show (*.lightstage)\0*.lightstage\0Alle Dateien\0*.*\0" )
-#define kModelFilter LW( L"3D-Modelle (*.glb;*.gltf;*.fbx;*.obj)\0*.glb;*.gltf;*.fbx;*.obj\0Alle Dateien\0*.*\0" )
-static const wchar_t* kGdtfFilter  = L"GDTF Fixture (*.gdtf)\0*.gdtf\0";
+#define kShowFilter L( "LightStage Show (*.lightstage)\0*.lightstage\0Alle Dateien\0*.*\0" )
+#define kModelFilter L( "3D-Modelle (*.glb;*.gltf;*.fbx;*.obj)\0*.glb;*.gltf;*.fbx;*.obj\0Alle Dateien\0*.*\0" )
+static const char kGdtfFilter[] = "GDTF Fixture (*.gdtf)\0*.gdtf\0";
 
 static ImU32 FixtureColor( int id, float a = 1.0f )
 {
@@ -46,12 +28,11 @@ static ImU32 FixtureColor( int id, float a = 1.0f )
 }
 
 //================================================================ lifecycle
-bool App::Init( void* wnd, std::string* err )
+bool App::Init( std::string* err )
 {
-	hwnd   = wnd;
 	exeDir = ExeDir();
-	lib.LoadAll( exeDir + "\\library" );
-	if( lib.defs.empty() ) Log( "warning: fixture library is empty (%s\\library)", exeDir.c_str() );
+	lib.LoadAll( exeDir + LS_SEP "library" );
+	if( lib.defs.empty() ) Log( "warning: fixture library is empty (%s" LS_SEP "library)", exeDir.c_str() );
 	if( !ren.Init( err ) ) return false;
 	midi.Open();
 	ports_ = ListComPorts();
@@ -92,12 +73,12 @@ void App::Shutdown()
 bool App::ConfirmClose()
 {
 	if( !show.dirty ) return true;
-	int r = MessageBoxW( (HWND)hwnd, LW( L"Die Show hat ungespeicherte Änderungen. Speichern?" ), L"LightStage", MB_YESNOCANCEL | MB_ICONQUESTION );
-	if( r == IDCANCEL ) return false;
-	if( r == IDYES )
+	const int r = AskYesNoCancel( L( "Die Show hat ungespeicherte Änderungen. Speichern?" ) );
+	if( r == kAnswerCancel ) return false;
+	if( r == kAnswerYes )
 	{
 		std::string p = show.path;
-		if( p.empty() ) p = FileDialog( hwnd, true, kShowFilter, L"lightstage" );
+		if( p.empty() ) p = FileDialog( true, kShowFilter, "lightstage" );
 		if( p.empty() ) return false;
 		return SaveShow( p );
 	}
@@ -120,7 +101,7 @@ void App::NewShow()
 	sel.clear();
 	show.fxSelId = 0;
 	//standard MIDI mapping (MIDI tab > "Als Standard speichern")
-	if( GetFileAttributesW( Widen( MidiDefaultFile() ).c_str() ) != INVALID_FILE_ATTRIBUTES ) ImportMidi( MidiDefaultFile(), true );
+	if( FileExists( MidiDefaultFile() ) ) ImportMidi( MidiDefaultFile(), true );
 	show.dirty = false;
 	io.Apply();
 	UndoReset();
@@ -132,11 +113,11 @@ bool App::RegisterEmbeddedFixture( const std::string& id, const Json& ofl )
 	size_t a = id.find( '/' ), b = id.find( '/', a + 1 );
 	if( a == std::string::npos || b == std::string::npos || !ofl.IsObj() ) return false;
 	const std::string mf = id.substr( a + 1, b - a - 1 ), key = id.substr( b + 1 );
-	const std::string root = exeDir + "\\library";
+	const std::string root = exeDir + LS_SEP "library";
 	std::string mfName     = ofl[ "lightstageEditor" ][ "manufacturer" ].Str( mf );
 	RegisterUserManufacturer( root, mf, mfName );
-	CreateDirectoryW( Widen( root + "\\user\\" + mf ).c_str(), nullptr );
-	std::string path = root + "\\user\\" + mf + "\\" + key + ".json", err;
+	MakeDir( root + LS_SEP "user" LS_SEP + mf );
+	std::string path = root + LS_SEP "user" LS_SEP + mf + LS_SEP + key + ".json", err;
 	if( !WriteText( path, WriteJson( ofl, true ) ) ) return false;
 	auto nd = std::make_unique< FixtureDef >();
 	if( !ParseOflFixture( ofl, id, mfName, *nd, &err ) ) return false;
@@ -221,10 +202,16 @@ void App::DropFile( const std::string& path )
 	{
 		//audio file: audio track of the Time Line. Dropped onto the time area = starts at the mouse (grid), else at 0 / where it was
 		double off = -1;
-		POINT pt{};
+		struct { long x, y; } pt{};
 		bool have = dropPt_;
-		if( have ) { pt.x = (LONG)dropX_; pt.y = (LONG)dropY_; }
-		else have = hwnd && GetCursorPos( &pt ) && ScreenToClient( (HWND)hwnd, &pt );
+		if( have ) { pt.x = (long)dropX_; pt.y = (long)dropY_; }
+		else
+		{
+			float cx = 0, cy = 0;
+			have = CursorInWindow( cx, cy );
+			pt.x = (long)cx;
+			pt.y = (long)cy;
+		}
 		if( have && ImGui::GetFrameCount() - tlGeo_.frame <= 2 && tlGeo_.pps > 0 && pt.x >= tlGeo_.x0 && pt.x < tlGeo_.x1 && pt.y >= tlGeo_.y0 && pt.y < tlGeo_.y1 )
 			off = std::max( 0.0, show.tl.Snap( tlGeo_.view0 + ( pt.x - tlGeo_.x0 ) / tlGeo_.pps ) );
 		const bool added = AddAudioTrack( path, off );
@@ -514,12 +501,12 @@ void App::Frame( float dt )
 		if( gio.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_S ) )
 		{
 			std::string p = show.path;
-			if( p.empty() || gio.KeyShift ) p = FileDialog( hwnd, true, kShowFilter, L"lightstage", show.path );
+			if( p.empty() || gio.KeyShift ) p = FileDialog( true, kShowFilter, "lightstage", show.path );
 			if( !p.empty() ) SaveShow( p );
 		}
 		if( gio.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_O ) && ConfirmClose() )
 		{
-			std::string p = FileDialog( hwnd, false, kShowFilter, L"lightstage" );
+			std::string p = FileDialog( false, kShowFilter, "lightstage" );
 			if( !p.empty() ) OpenShow( p );
 		}
 		if( gio.KeyCtrl && !gio.KeyShift && ImGui::IsKeyPressed( ImGuiKey_Z ) ) Undo();
@@ -631,7 +618,7 @@ void App::Frame( float dt )
 
 std::string App::OpenAudioDialog()
 {
-	return FileDialog( hwnd, false, L"Audio (wav, mp3, aiff, m4a, flac, wma)\0*.wav;*.mp3;*.aif;*.aiff;*.m4a;*.aac;*.flac;*.wma\0*.*\0*.*\0", L"wav" );
+	return FileDialog( false, "Audio (wav, mp3, aiff, m4a, flac, wma)\0*.wav;*.mp3;*.aif;*.aiff;*.m4a;*.aac;*.flac;*.wma\0*.*\0*.*\0", "wav" );
 }
 
 //================================================================ undo / redo
@@ -1019,17 +1006,17 @@ void App::Menu()
 		if( ImGui::MenuItem( L( "Neue Show" ) ) && ConfirmClose() ) NewShow();
 		if( ImGui::MenuItem( L( "Öffnen..." ), "Ctrl+O" ) && ConfirmClose() )
 		{
-			std::string p = FileDialog( hwnd, false, kShowFilter, L"lightstage" );
+			std::string p = FileDialog( false, kShowFilter, "lightstage" );
 			if( !p.empty() ) OpenShow( p );
 		}
 		if( ImGui::MenuItem( L( "Speichern" ), "Ctrl+S" ) )
 		{
-			std::string p = show.path.empty() ? FileDialog( hwnd, true, kShowFilter, L"lightstage" ) : show.path;
+			std::string p = show.path.empty() ? FileDialog( true, kShowFilter, "lightstage" ) : show.path;
 			if( !p.empty() ) SaveShow( p );
 		}
 		if( ImGui::MenuItem( L( "Speichern unter..." ), "Ctrl+Shift+S" ) )
 		{
-			std::string p = FileDialog( hwnd, true, kShowFilter, L"lightstage", show.path );
+			std::string p = FileDialog( true, kShowFilter, "lightstage", show.path );
 			if( !p.empty() ) SaveShow( p );
 		}
 		ImGui::Separator();
@@ -1037,13 +1024,13 @@ void App::Menu()
 		if( ImGui::MenuItem( L( "Demo-Show laden (Konzertbühne)" ) ) && ConfirmClose() ) BuildDemo();
 		if( ImGui::MenuItem( L( "3D-Modell importieren..." ) ) )
 		{
-			std::string p = FileDialog( hwnd, false, kModelFilter, L"glb" );
+			std::string p = FileDialog( false, kModelFilter, "glb" );
 			if( !p.empty() ) DropFile( p );
 		}
 		if( ImGui::MenuItem( L( "Eigene Lampe erstellen (Fixture-Editor)..." ) ) ) OpenFixtureEditor( nullptr );
 		if( ImGui::MenuItem( L( "GDTF-Lampe importieren..." ) ) )
 		{
-			std::string p = FileDialog( hwnd, false, kGdtfFilter, L"gdtf" );
+			std::string p = FileDialog( false, kGdtfFilter, "gdtf" );
 			if( !p.empty() ) DropFile( p );
 		}
 		ImGui::Separator();
@@ -1052,7 +1039,7 @@ void App::Menu()
 		if( ImGui::MenuItem( L( "Lightshow exportieren..." ) ) ) lbxWin_ = true;
 		if( ImGui::MenuItem( L( "Lightshow importieren..." ) ) )
 		{
-			std::string p = FileDialog( hwnd, false, L"Lightshow (*.lightshow)\0*.lightshow\0", L"lightshow" );
+			std::string p = FileDialog( false, "Lightshow (*.lightshow)\0*.lightshow\0", "lightshow" );
 			if( !p.empty() ) LbiOpen( p );
 		}
 		if( ImGui::MenuItem( L( "Resolume-Preset exportieren..." ) ) ) resWin_ = true;
@@ -1070,7 +1057,7 @@ void App::Menu()
 		}
 		if( ImGui::MenuItem( L( "Screenshot speichern..." ) ) )
 		{
-			std::string p = FileDialog( hwnd, true, L"PNG (*.png)\0*.png\0", L"png" );
+			std::string p = FileDialog( true, "PNG (*.png)\0*.png\0", "png" );
 			std::vector< uint8_t > px;
 			int w, h;
 			if( !p.empty() && ren.ReadOutput( px, w, h ) )
@@ -1355,7 +1342,7 @@ bool App::AutosaveWrite( const std::string& file )
 	j.Set( "autosaveOf", show.path );
 	const std::string tmp = file + ".tmp";
 	if( !WriteText( tmp, WriteJson( j, false ) ) ) return false;
-	return MoveFileExW( Widen( tmp ).c_str(), Widen( file ).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0;
+	return MoveFileReplace( tmp, file, true );
 }
 bool App::AutosaveRecover( const std::string& file )
 {
@@ -1371,7 +1358,7 @@ bool App::AutosaveRecover( const std::string& file )
 void App::AutosaveClear()
 {
 	if( !settingsLoaded_ ) return;//self test: never touch the user's files
-	DeleteFileW( Widen( AutosaveFile() ).c_str() );
+	RemoveFile( AutosaveFile() );
 	autosaveT_ = Now();
 }
 void App::AutosaveTick()
@@ -1382,20 +1369,15 @@ void App::AutosaveTick()
 		//left over from a run that did not end normally: keep it aside and ask
 		autosaveInit_ = true;
 		autosaveT_    = Now();
-		const std::wstring a = Widen( AutosaveFile() ), r = Widen( RecoverFile() );
-		if( GetFileAttributesW( a.c_str() ) != INVALID_FILE_ATTRIBUTES ) MoveFileExW( a.c_str(), r.c_str(), MOVEFILE_REPLACE_EXISTING );
-		WIN32_FILE_ATTRIBUTE_DATA fa{};
-		if( GetFileAttributesExW( r.c_str(), GetFileExInfoStandard, &fa ) )
+		if( FileExists( AutosaveFile() ) ) MoveFileReplace( AutosaveFile(), RecoverFile() );
+		std::tm st{};
+		if( FileModTime( RecoverFile(), st ) )
 		{
-			FILETIME lt;
-			SYSTEMTIME st;
-			FileTimeToLocalFileTime( &fa.ftLastWriteTime, &lt );
-			FileTimeToSystemTime( &lt, &st );
 			std::string txt, orig;
 			Json j;
 			if( ReadText( RecoverFile(), txt ) && ParseJson( txt, j ) ) orig = j[ "autosaveOf" ].Str();
 			char b[ 256 ];
-			snprintf( b, sizeof( b ), L( "%s, Stand %02d.%02d.%04d %02d:%02d" ), orig.empty() ? L( "neue Show" ) : FileName( orig ).c_str(), st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute );
+			snprintf( b, sizeof( b ), L( "%s, Stand %02d.%02d.%04d %02d:%02d" ), orig.empty() ? L( "neue Show" ) : FileName( orig ).c_str(), st.tm_mday, st.tm_mon + 1, st.tm_year + 1900, st.tm_hour, st.tm_min );
 			recoverInfo_ = b;
 			recoverAsk_  = true;
 		}
@@ -1412,7 +1394,7 @@ void App::AutosaveTick()
 			{
 				recoverAsk_ = false;
 				AutosaveRecover( RecoverFile() );
-				DeleteFileW( Widen( RecoverFile() ).c_str() );
+				RemoveFile( RecoverFile() );
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
@@ -1420,7 +1402,7 @@ void App::AutosaveTick()
 			{
 				recoverAsk_ = false;
 				//kept once more as a last copy
-				MoveFileExW( Widen( RecoverFile() ).c_str(), Widen( exeDir + "\\autosave_verworfen.lightstage" ).c_str(), MOVEFILE_REPLACE_EXISTING );
+				MoveFileReplace( RecoverFile(), exeDir + LS_SEP "autosave_verworfen.lightstage" );
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -1610,7 +1592,7 @@ void App::ExportWindow()
 		ImGui::TextDisabled( L( "H.264 / MP4. Effekte und Snapshots laufen weiter wie gerade eingestellt;\nwährend des Exports ruht die MIDI-/OSC-Steuerung." ) );
 		if( ImGui::Button( L( "Exportieren..." ), ImVec2( 160 * ui, 0 ) ) )
 		{
-			std::string p = FileDialog( hwnd, true, L"MP4 (*.mp4)\0*.mp4\0", L"mp4" );
+			std::string p = FileDialog( true, "MP4 (*.mp4)\0*.mp4\0", "mp4" );
 			if( !p.empty() ) ExportStart( p );
 		}
 	}
@@ -1728,7 +1710,7 @@ void App::LbxWindow()
 		ImGui::TextDisabled( L( "%.1f s, %d Universen, %d Lampen. Während des Exports ruht die MIDI-/OSC-Steuerung." ), len, (int)show.universes.size(), (int)show.fixtures.size() );
 		if( ImGui::Button( L( "Exportieren..." ), ImVec2( 160 * ui, 0 ) ) )
 		{
-			std::string p = FileDialog( hwnd, true, L"Lightshow (*.lightshow)\0*.lightshow\0", L"lightshow" );
+			std::string p = FileDialog( true, "Lightshow (*.lightshow)\0*.lightshow\0", "lightshow" );
 			if( !p.empty() ) LbxStart( p );
 		}
 	}
@@ -1801,7 +1783,7 @@ bool App::LbiRun()
 }
 std::string App::OpenLightshowDialog()
 {
-	return FileDialog( hwnd, false, L"Lightshow (*.lightshow)\0*.lightshow\0", L"lightshow" );
+	return FileDialog( false, "Lightshow (*.lightshow)\0*.lightshow\0", "lightshow" );
 }
 //Lightshow track -> DMX time lanes in this show (same place on the timeline); the track is removed
 bool App::TlConvertShowTrack( uint32_t uid )
@@ -2324,7 +2306,7 @@ void App::BridgeListenerUpdate()
 }
 void App::ExportManifest()
 {
-	std::string p = FileDialog( hwnd, true, L"LightStage-Manifest (*.lsmanifest)\0*.lsmanifest\0JSON (*.json)\0*.json\0", L"lsmanifest" );
+	std::string p = FileDialog( true, "LightStage-Manifest (*.lsmanifest)\0*.lsmanifest\0JSON (*.json)\0*.json\0", "lsmanifest" );
 	if( p.empty() ) return;
 	SetStatus( WriteText( p, bridge.ManifestJson( show ) ) ? L( "Manifest gespeichert: " ) + FileName( p ) : L( "Manifest konnte nicht gespeichert werden" ) );
 }
@@ -2344,7 +2326,7 @@ void App::PollOsc()
 void App::StartEngine()
 {
 	if( engineRun_ ) return;
-	engineEvent_ = CreateEventW( nullptr, FALSE, FALSE, nullptr );
+	engineEvent_ = EventCreate();
 	midi.wake    = engineEvent_;
 	osc.wake     = engineEvent_;
 	engineRun_   = true;
@@ -2354,7 +2336,7 @@ void App::StopEngine()
 {
 	if( !engineRun_ ) return;
 	engineRun_ = false;
-	SetEvent( (HANDLE)engineEvent_ );
+	EventSignal( engineEvent_ );
 	if( engine_.joinable() )
 	{
 		//called from Frame (export start): the UI holds engineLock_ and the engine thread may be waiting for it -
@@ -2366,34 +2348,23 @@ void App::StopEngine()
 	}
 	midi.wake = nullptr;
 	osc.wake  = nullptr;
-	CloseHandle( (HANDLE)engineEvent_ );
+	EventDestroy( engineEvent_ );
 	engineEvent_ = nullptr;
 }
 void App::EngineLoop()
 {
-	timeBeginPeriod( 1 );
+	TimerPrecision( true );
 	bool boosted  = false;
-	HANDLE mmcss  = nullptr;
+	void* rt      = nullptr;//real-time priority token
 	double rateT  = Now();
 	int ticks     = 0;
 	while( engineRun_ )
 	{
-		WaitForSingleObject( (HANDLE)engineEvent_, 1 );//wakes on MIDI / OSC input, else 1 kHz
+		EventWait( engineEvent_, 1 );//wakes on MIDI / OSC input, else 1 kHz
 		if( engineBoost_ != boosted )
 		{
 			boosted = engineBoost_;
-			if( boosted )
-			{
-				DWORD idx = 0;
-				SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL );
-				mmcss = AvSetMmThreadCharacteristicsW( L"Pro Audio", &idx );
-			}
-			else
-			{
-				if( mmcss ) AvRevertMmThreadCharacteristics( mmcss );
-				mmcss = nullptr;
-				SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_NORMAL );
-			}
+			rt      = ThreadRealtime( boosted, rt );//Windows: time-critical + MMCSS "Pro Audio"
 		}
 		{
 			std::lock_guard< std::recursive_mutex > l( engineLock_ );
@@ -2419,8 +2390,8 @@ void App::EngineLoop()
 			rateT    = now;
 		}
 	}
-	if( mmcss ) AvRevertMmThreadCharacteristics( mmcss );
-	timeEndPeriod( 1 );
+	if( rt ) ThreadRealtime( false, rt );
+	TimerPrecision( false );
 }
 
 //================================================================ performance mode
@@ -2436,13 +2407,7 @@ void App::SetPerfMode( bool on )
 	ApplyQuality();
 	engineBoost_ = on;
 	io.boost     = on;
-	SetPriorityClass( GetCurrentProcess(), on ? ABOVE_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS );
-	//no Windows "efficiency mode" throttling of this process while live
-	PROCESS_POWER_THROTTLING_STATE pt{};
-	pt.Version     = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-	pt.ControlMask = on ? PROCESS_POWER_THROTTLING_EXECUTION_SPEED : 0;
-	pt.StateMask   = 0;
-	SetProcessInformation( GetCurrentProcess(), ProcessPowerThrottling, &pt, sizeof( pt ) );
+	ProcessPerformance( on );//higher priority, no efficiency mode (Windows) / App Nap (macOS)
 	lastViewRender_ = 0;
 	if( changed )
 	{
@@ -2624,21 +2589,14 @@ double App::FrameInterval() const
 }
 void App::UpdateCpu()
 {
-	static ULONGLONG lastK = 0, lastU = 0;
-	static double lastT    = 0;
-	double now             = Now();
+	static double lastC = 0;
+	static double lastT = 0;
+	double now          = Now();
 	if( now - lastT < 1.0 ) return;
-	FILETIME c, e, k, u;
-	if( !GetProcessTimes( GetCurrentProcess(), &c, &e, &k, &u ) ) return;
-	ULONGLONG K = ( (ULONGLONG)k.dwHighDateTime << 32 ) | k.dwLowDateTime, U = ( (ULONGLONG)u.dwHighDateTime << 32 ) | u.dwLowDateTime;
-	if( lastT > 0 )
-	{
-		SYSTEM_INFO si;
-		GetSystemInfo( &si );
-		cpu_ = (float)( ( ( K - lastK ) + ( U - lastU ) ) * 1e-7 / ( ( now - lastT ) * std::max< DWORD >( 1, si.dwNumberOfProcessors ) ) * 100.0 );
-	}
-	lastK = K;
-	lastU = U;
+	const double C = ProcessCpuSeconds();
+	if( C <= 0 ) return;
+	if( lastT > 0 ) cpu_ = (float)( ( C - lastC ) / ( ( now - lastT ) * CpuCount() ) * 100.0 );
+	lastC = C;
 	lastT = now;
 }
 void App::LoadSettings()
@@ -2646,7 +2604,7 @@ void App::LoadSettings()
 	settingsLoaded_ = true;
 	std::string txt;
 	Json j;
-	if( !ReadText( exeDir + "\\settings.json", txt ) || !ParseJson( txt, j, nullptr ) ) return;
+	if( !ReadText( exeDir + LS_SEP "settings.json", txt ) || !ParseJson( txt, j, nullptr ) ) return;
 	perfView_  = Clamp( j[ "perfView" ].I( 1 ), 0, 2 );
 	perfFps_   = Clamp( j[ "perfFps" ].F( 20 ), 2.0f, 120.0f );
 	perfScale_ = Clamp( j[ "perfScale" ].F( 0.5f ), 0.2f, 1.0f );
@@ -2677,7 +2635,7 @@ void App::SaveSettings()
 	j.Set( "qualityAuto", qualityAuto_ );
 	if( !languageSaved_.empty() ) j.Set( "language", languageSaved_ );
 	j.Set( "autosaveMinutes", autosaveMin );//only what the user chose (View > Language)
-	WriteText( exeDir + "\\settings.json", WriteJson( j, true ) );
+	WriteText( exeDir + LS_SEP "settings.json", WriteJson( j, true ) );
 }
 
 void App::PerfWindow()
@@ -2709,19 +2667,17 @@ void App::PerfWindow()
 	ImGui::SeparatorText( "System" );
 	if( powerPlan_.empty() )
 	{
-		GUID* g = nullptr;
-		if( PowerGetActiveScheme( nullptr, &g ) == ERROR_SUCCESS )
-		{
-			wchar_t nm[ 256 ] = {};
-			DWORD sz          = sizeof( nm );
-			if( PowerReadFriendlyName( nullptr, g, nullptr, nullptr, (UCHAR*)nm, &sz ) == ERROR_SUCCESS ) powerPlan_ = Narrow( nm );
-			LocalFree( g );
-		}
+		powerPlan_ = PowerPlanName();
 		if( powerPlan_.empty() ) powerPlan_ = "?";
 	}
 	ImGui::Text( L( "Energieplan: %s" ), powerPlan_.c_str() );
+#ifdef _WIN32
 	ImGui::TextDisabled( L( "Für Live: Energieplan \"Höchstleistung\", USB-Energiesparen für das USB-DMX-Interface aus\n(Geräte-Manager > USB-Root-Hub > Energieverwaltung), Firewall-Freigabe für LightStage." ) );
 	ImGui::TextDisabled( L( "Im Performance-Modus: Prozesspriorität \"höher als normal\", Eingabe- und DMX-Thread\nmit Audio-Priorität (MMCSS), kein Windows-Effizienzmodus." ) );
+#else
+	ImGui::TextDisabled( L( "Für Live: Netzteil anschließen, Stromsparmodus aus, Firewall-Freigabe für LightStage." ) );
+	ImGui::TextDisabled( L( "Im Performance-Modus: Eingabe- und DMX-Thread mit Echtzeit-Priorität,\nkein App Nap, kein automatischer Ruhezustand." ) );
+#endif
 	ImGui::End();
 }
 

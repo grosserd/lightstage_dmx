@@ -3,8 +3,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cstring>
-#include <windows.h>
-#include <commdlg.h>
+#include "platform.h"
 
 namespace ls
 {
@@ -209,8 +208,8 @@ void App::ResolumeWindow()
 	ImGui::Separator();
 	ImGui::Text( L( "%d Screen(s), %d Slice(s), %d Maske(n)" ), nScreens, nSlices, nMasks );
 	const std::string dir  = ResolumePresetDir();
-	const std::string path = dir.empty() ? std::string() : dir + "\\" + SafeFileName( resOpt_.name ) + ".xml";
-	const bool exists      = !path.empty() && GetFileAttributesW( Widen( path ).c_str() ) != INVALID_FILE_ATTRIBUTES;
+	const std::string path = dir.empty() ? std::string() : dir + LS_SEP + SafeFileName( resOpt_.name ) + ".xml";
+	const bool exists      = !path.empty() && FileExists( path );
 	ImGui::BeginDisabled( path.empty() || nSlices == 0 );
 	if( ImGui::Button( exists ? L( "In Resolume überschreiben" ) : L( "In Resolume speichern" ), ImVec2( 200 * ui, 0 ) ) ) ResolumeSave( path );
 	ImGui::EndDisabled();
@@ -219,17 +218,8 @@ void App::ResolumeWindow()
 	ImGui::BeginDisabled( nSlices == 0 );
 	if( ImGui::Button( L( "Speichern unter..." ) ) )
 	{
-		wchar_t buf[ MAX_PATH * 4 ] = {};
-		wcsncpy( buf, Widen( path.empty() ? SafeFileName( resOpt_.name ) + ".xml" : path ).c_str(), MAX_PATH * 4 - 1 );
-		OPENFILENAMEW of{};
-		of.lStructSize = sizeof( of );
-		of.hwndOwner   = (HWND)hwnd;
-		of.lpstrFilter = L"Resolume Advanced Output (*.xml)\0*.xml\0";
-		of.lpstrFile   = buf;
-		of.nMaxFile    = MAX_PATH * 4;
-		of.lpstrDefExt = L"xml";
-		of.Flags       = OFN_NOCHANGEDIR | OFN_EXPLORER | OFN_OVERWRITEPROMPT;
-		if( GetSaveFileNameW( &of ) ) ResolumeSave( Narrow( buf ) );
+		const std::string p = SaveFileDialog( FilterList( "Resolume Advanced Output (*.xml)\0*.xml\0" ), "xml", path.empty() ? SafeFileName( resOpt_.name ) + ".xml" : path );
+		if( !p.empty() ) ResolumeSave( p );
 	}
 	ImGui::EndDisabled();
 	if( !resMsg_.empty() ) ImGui::TextColored( resMsgErr_ ? ImVec4( 1, 0.5f, 0.4f, 1 ) : ImVec4( 0.5f, 0.9f, 0.6f, 1 ), "%s", resMsg_.c_str() );

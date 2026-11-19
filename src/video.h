@@ -1,4 +1,5 @@
-// video inputs for virtual projectors: animated test card, video files (Windows Media Foundation)
+// video inputs for virtual projectors: animated test card, video files (Windows: Media Foundation, video_win.cpp;
+// macOS: AVFoundation, video_mac.mm)
 // and NDI sources (NDI runtime loaded at run time from NDI Tools / Resolume / TouchDesigner ...)
 #pragma once
 #include "common.h"
@@ -35,7 +36,7 @@ std::unique_ptr< VideoSource > OpenNdi( const std::string& sourceName );
 //path without extension in, full file name out
 bool WriteTestVideo( std::string& path, int w, int h, int frames );
 
-//H.264 .mp4 writer (Media Foundation) for the video export; pictures top-down RGBA
+//H.264 .mp4 writer (Media Foundation / AVAssetWriter) for the video export; pictures top-down RGBA
 class VideoWriter
 {
 public:
@@ -45,14 +46,14 @@ public:
 	bool Close();//finalizes the file
 	int Frames() const { return frames_; }
 private:
-	void* wr_ = nullptr;
+	void* wr_ = nullptr;//IMFSinkWriter / AVAssetWriter wrapper
 	unsigned long stream_ = 0;
 	int w_ = 0, h_ = 0, fps_ = 30, frames_ = 0;
 	bool co_ = false;
 };
 double VideoFileSeconds( const std::string& path );//duration of a video file (0 = unreadable)
 
-//NDI runtime: true if Processing.NDI.Lib.x64.dll was found and initialised (where = dll path)
+//NDI runtime: true if Processing.NDI.Lib.x64.dll (macOS: libndi.dylib) was found and initialised (where = dll path)
 bool NdiAvailable( std::string* where = nullptr );
 void NdiShutdown();//stop discovery and close the NDI runtime (program end, after all NDI sources are closed)
 std::vector< std::string > NdiSources();//sources on the network (discovery keeps running in the background)

@@ -100,7 +100,7 @@ void App::BuildJazzDemo()
 	//furniture, instruments, curtain, bar, walls
 	{
 		ModelObj m;
-		m.path = exeDir + "\\assets\\jazzclub\\jazzclub.glb";
+		m.path = exeDir + LS_SEP "assets" LS_SEP "jazzclub" LS_SEP "jazzclub.glb";
 		m.name = "Jazzclub";
 		std::string err;
 		if( ren.EnsureModel( m, &err ) ) show.models.push_back( m );

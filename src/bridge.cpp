@@ -1,10 +1,9 @@
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
+#include "netsock.h"
 #include "bridge.h"
 #include "effects.h"
 #include "miditargets.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -71,24 +70,14 @@ std::string KeyAddr( uint32_t ip, uint16_t port )
 std::string LocalIpFor( uint32_t ip, uint16_t port )
 {
 	std::string r = "127.0.0.1";
-	SOCKET s      = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-	if( s == INVALID_SOCKET ) return r;
-	sockaddr_in to{};
-	to.sin_family      = AF_INET;
-	to.sin_addr.s_addr = ip;
-	to.sin_port        = htons( port );
-	if( connect( s, (sockaddr*)&to, sizeof( to ) ) == 0 )
+	net::Sock s   = net::Udp();
+	if( s == net::kInvalid ) return r;
+	if( net::Connect( s, net::Addr( ip, port ) ) )
 	{
 		sockaddr_in me{};
-		int len = sizeof( me );
-		if( getsockname( s, (sockaddr*)&me, &len ) == 0 )
-		{
-			char b[ 32 ];
-			inet_ntop( AF_INET, &me.sin_addr, b, sizeof( b ) );
-			r = b;
-		}
+		if( net::LocalAddr( s, me ) ) r = net::IpStr( me.sin_addr.s_addr );
 	}
-	closesocket( s );
+	net::Close( s );
 	return r;
 }
 
@@ -369,31 +358,29 @@ bool Bridge::Start( int port, std::string* err, bool wait )
 {
 	Stop();
 	error.clear();
-	WSADATA wd;
-	WSAStartup( MAKEWORD( 2, 2 ), &wd );
-	SOCKET o = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );//replies: plain UDP socket, no listen
-	SOCKET l = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
-	if( l == INVALID_SOCKET || o == INVALID_SOCKET )
+	net::Startup();
+	net::Sock o = net::Udp();//replies: plain UDP socket, no listen
+	net::Sock l = net::Tcp();
+	if( l == net::kInvalid || o == net::kInvalid )
 	{
-		if( l != INVALID_SOCKET ) closesocket( l );
-		if( o != INVALID_SOCKET ) closesocket( o );
+		net::Close( l );
+		net::Close( o );
 		error = L( "Netzwerk nicht verfügbar" );
 		if( err ) *err = error;
 		return false;
 	}
-	out_      = (uintptr_t)o;
-	listen_   = (uintptr_t)l;
+#ifndef _WIN32
+	net::SetFlag( l, SO_REUSEADDR, true );//POSIX: restart on the same port despite TIME_WAIT (on Windows it would allow port hijacking)
+#endif
+	out_      = net::ToU( o );
+	listen_   = net::ToU( l );
 	httpPort_ = port;
 	ready_    = false;
 	failed_   = false;
 	run_      = true;
 	http_     = std::thread( [ this, l, port ] {
-        sockaddr_in a{};
-        a.sin_family      = AF_INET;
-        a.sin_port        = htons( (u_short)port );
-        a.sin_addr.s_addr = htonl( INADDR_ANY );
         const double t0   = Now();
-        if( bind( l, (sockaddr*)&a, sizeof( a ) ) != 0 || listen( l, 8 ) != 0 )
+        if( !net::Bind( l, net::Addr( htonl( INADDR_ANY ), (uint16_t)port ) ) || listen( l, 8 ) != 0 )
         {
             if( run_ )
             {
@@ -410,7 +397,7 @@ bool Bridge::Start( int port, std::string* err, bool wait )
 	} );
 	if( wait )
 	{
-		while( !ready_ && !failed_ ) Sleep( 5 );
+		while( !ready_ && !failed_ ) std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
 		if( failed_ )
 		{
 			if( err ) *err = error;
@@ -425,11 +412,18 @@ void Bridge::Stop()
 {
 	if( !run_ && listen_ == ~(uintptr_t)0 && out_ == ~(uintptr_t)0 ) return;
 	run_ = false;
+	const net::Sock l = net::FromU( listen_.exchange( ~(uintptr_t)0 ) );
+#ifdef _WIN32
 	//close first: this also ends a listen() that is still held by a network filter
-	const uintptr_t l = listen_.exchange( ~(uintptr_t)0 );
-	if( l != ~(uintptr_t)0 ) closesocket( (SOCKET)l );
+	net::Close( l );
 	if( http_.joinable() ) http_.join();
-	if( out_ != ~(uintptr_t)0 ) closesocket( (SOCKET)out_ );
+#else
+	//POSIX: close() does not wake a thread blocked on the socket and the fd number could be reused: shut down, join, then close
+	net::Shutdown( l );
+	if( http_.joinable() ) http_.join();
+	net::Close( l );
+#endif
+	net::Close( net::FromU( out_ ) );
 	out_      = ~(uintptr_t)0;
 	httpPort_ = 0;
 	ready_    = false;
@@ -440,17 +434,17 @@ void Bridge::HttpLoop()
 {
 	while( run_ )
 	{
-		fd_set rs;
-		FD_ZERO( &rs );
-		FD_SET( (SOCKET)listen_, &rs );
-		timeval tv{ 0, 200000 };
-		if( select( 0, &rs, nullptr, nullptr, &tv ) <= 0 ) continue;
-		SOCKET c = accept( (SOCKET)listen_, nullptr, nullptr );
-		if( c == INVALID_SOCKET ) continue;
-		DWORD tmo = 2000;
-		setsockopt( c, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof( tmo ) );
+		const net::Sock lsock = net::FromU( listen_ );
+		if( lsock == net::kInvalid ) break;//Stop()
+		if( net::WaitReadable( lsock, 200 ) <= 0 ) continue;
+		net::Sock c = accept( lsock, nullptr, nullptr );
+		if( c == net::kInvalid ) continue;
+#ifdef __APPLE__
+		net::SetFlag( c, SO_NOSIGPIPE, true );//a client that hangs up early must not raise SIGPIPE
+#endif
+		net::SetRecvTimeout( c, 2000 );
 		char buf[ 2048 ];
-		int n         = recv( c, buf, sizeof( buf ) - 1, 0 );
+		int n         = net::Recv( c, buf, sizeof( buf ) - 1 );
 		std::string req = n > 0 ? std::string( buf, n ) : std::string();
 		bool get        = req.compare( 0, 4, "GET " ) == 0;
 		std::string path;
@@ -478,22 +472,18 @@ void Bridge::HttpLoop()
 		size_t sentBytes = 0;
 		while( sentBytes < head.size() )
 		{
-			int k = send( c, head.data() + sentBytes, (int)( head.size() - sentBytes ), 0 );
+			int k = net::Send( c, head.data() + sentBytes, (int)( head.size() - sentBytes ) );
 			if( k <= 0 ) break;
 			sentBytes += k;
 		}
-		closesocket( c );
+		net::Close( c );
 	}
 }
 
 void Bridge::SendRaw( const BridgeClient& c, const std::vector< uint8_t >& msg )
 {
 	if( out_ == ~(uintptr_t)0 ) return;
-	sockaddr_in to{};
-	to.sin_family      = AF_INET;
-	to.sin_addr.s_addr = c.ip;
-	to.sin_port        = htons( c.port );
-	sendto( (SOCKET)out_, (const char*)msg.data(), (int)msg.size(), 0, (sockaddr*)&to, sizeof( to ) );
+	net::SendTo( net::FromU( out_ ), msg.data(), (int)msg.size(), net::Addr( c.ip, c.port ) );
 	++sent;
 }
 

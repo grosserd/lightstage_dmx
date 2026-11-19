@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 #include "i18n.h"
@@ -116,14 +117,34 @@ bool ParseHexColor( const std::string& s, V3& out );
 //black body (Kelvin) -> normalized rgb, approximation
 V3 Kelvin( float k );
 
-//paths / files
-std::string ExeDir();
+//paths / files. Joins use LS_SEP: "\\" on Windows (paths shown to the user or saved in shows stay as they
+//were), "/" elsewhere. The helpers below accept both separators on every platform.
+#ifdef _WIN32
+#define LS_SEP "\\"
+#else
+#define LS_SEP "/"
+#endif
+inline bool IsPathSep( char c ) { return c == '\\' || c == '/'; }
+std::string ExeDir();//program data (assets, library); macOS app bundle: Contents/Resources
 bool ReadFile( const std::string& path, std::vector< uint8_t >& out );
 bool ReadText( const std::string& path, std::string& out );
 bool WriteText( const std::string& path, const std::string& text );
 std::vector< std::string > ListFiles( const std::string& dir, const std::string& ext, bool recursive );
 std::string FileName( const std::string& path );
 std::string FileStem( const std::string& path );
+std::string DirName( const std::string& path );//part before the last separator, "" when there is none
+bool FileExists( const std::string& path );
+bool MakeDir( const std::string& dir );//one level, the parent must exist; true if it exists afterwards
+bool MakeDirs( const std::string& dir );//all missing levels
+bool RemoveFile( const std::string& path );
+bool MoveFileReplace( const std::string& from, const std::string& to, bool writeThrough = false );
+bool CopyFileReplace( const std::string& from, const std::string& to );
+bool FileModTime( const std::string& path, std::tm& local );//last write time as local time
+FILE* FOpen( const std::string& path, const char* mode );//UTF-8 path
+std::tm LocalTime( time_t t );
+std::string TempDir();//with a trailing separator
+std::string DocumentsDir();//the user's documents folder ("" if unknown)
+void SleepMs( int ms );
 std::string ToLower( std::string s );
 std::wstring Widen( const std::string& s );
 std::string Narrow( const std::wstring& s );

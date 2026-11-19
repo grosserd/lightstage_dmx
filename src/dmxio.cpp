@@ -1,12 +1,15 @@
 #include "dmxio.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "netsock.h"
+#include "serial.h"
+#ifdef _WIN32
 #include <windows.h>
-#include <setupapi.h>
-#include <devguid.h>
 #include <mmsystem.h>
-#include <set>
 #include <avrt.h>
+#else
+#include <pthread.h>
+#endif
+#include <chrono>
+#include <set>
 #include <cmath>
 #include <random>
 
@@ -130,87 +133,24 @@ static std::vector< uint8_t > ArtPollReply( uint32_t ip, int ports )
 	return p;
 }
 
-//---------------------------------------------------------------- COM ports
-std::vector< ComPort > ListComPorts()
-{
-	std::vector< ComPort > r;
-	HDEVINFO h = SetupDiGetClassDevsA( &GUID_DEVCLASS_PORTS, nullptr, nullptr, DIGCF_PRESENT );
-	if( h == INVALID_HANDLE_VALUE ) return r;
-	SP_DEVINFO_DATA di{};
-	di.cbSize = sizeof( di );
-	for( DWORD i = 0; SetupDiEnumDeviceInfo( h, i, &di ); ++i )
-	{
-		char name[ 256 ] = {}, hw[ 512 ] = {};
-		{ wchar_t wn[ 256 ] = {}; SetupDiGetDeviceRegistryPropertyW( h, &di, SPDRP_FRIENDLYNAME, nullptr, (PBYTE)wn, sizeof( wn ), nullptr ); WideCharToMultiByte( CP_UTF8, 0, wn, -1, name, sizeof( name ), nullptr, nullptr ); }//UTF-8 for the UI (umlauts in device names)
-		SetupDiGetDeviceRegistryPropertyA( h, &di, SPDRP_HARDWAREID, nullptr, (PBYTE)hw, sizeof( hw ), nullptr );
-		HKEY key = SetupDiOpenDevRegKey( h, &di, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ );
-		char port[ 64 ] = {};
-		if( key != INVALID_HANDLE_VALUE )
-		{
-			DWORD sz = sizeof( port ), type = 0;
-			RegQueryValueExA( key, "PortName", nullptr, &type, (LPBYTE)port, &sz );
-			RegCloseKey( key );
-		}
-		if( strncmp( port, "COM", 3 ) != 0 ) continue;
-		ComPort c;
-		c.port = port;
-		c.name = name;
-		c.hwid = hw;
-		std::string up = hw;
-		for( auto& ch : up ) ch = (char)toupper( (unsigned char)ch );
-		c.ftdi = up.find( "VID_0403" ) != std::string::npos || ToLower( name ).find( "dmx" ) != std::string::npos;
-		r.push_back( c );
-	}
-	SetupDiDestroyDeviceInfoList( h );
-	std::sort( r.begin(), r.end(), []( const ComPort& a, const ComPort& b ) { return atoi( a.port.c_str() + 3 ) < atoi( b.port.c_str() + 3 ); } );
-	return r;
-}
-
-static HANDLE OpenCom( const std::string& port )
-{
-	std::string p = "\\\\.\\" + port;
-	HANDLE h      = CreateFileA( p.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr );
-	if( h == INVALID_HANDLE_VALUE ) return nullptr;
-	DCB dcb{};
-	dcb.DCBlength = sizeof( dcb );
-	GetCommState( h, &dcb );
-	dcb.BaudRate = 115200;
-	dcb.ByteSize = 8;
-	dcb.Parity   = NOPARITY;
-	dcb.StopBits = ONESTOPBIT;
-	dcb.fDtrControl = DTR_CONTROL_ENABLE;
-	dcb.fRtsControl = RTS_CONTROL_ENABLE;
-	dcb.fOutxCtsFlow = FALSE;
-	dcb.fOutX = dcb.fInX = FALSE;
-	dcb.fBinary = TRUE;
-	SetCommState( h, &dcb );
-	COMMTIMEOUTS to{};
-	to.ReadIntervalTimeout        = 20;
-	to.ReadTotalTimeoutConstant   = 250;
-	to.ReadTotalTimeoutMultiplier = 0;
-	to.WriteTotalTimeoutConstant  = 200;
-	SetCommTimeouts( h, &to );
-	PurgeComm( h, PURGE_RXCLEAR | PURGE_TXCLEAR );
-	return h;
-}
-
+//---------------------------------------------------------------- Enttec (serial port: serial_win.cpp / serial_posix.cpp)
 //request widget parameters (label 3); a USB Pro answers with label 3
-static bool ProbeEnttec( HANDLE h, std::string* info )
+static bool ProbeEnttec( void* h, std::string* info )
 {
 	const uint8_t req[] = { 0x7E, 3, 2, 0, 0, 0, 0xE7 };
-	DWORD w             = 0;
-	if( !::WriteFile( h, req, sizeof( req ), &w, nullptr ) || w != sizeof( req ) ) return false;
+	if( !serial::Write( h, req, sizeof( req ) ) ) return false;
 	uint8_t buf[ 64 ];
-	DWORD got = 0, total = 0;
+	int got = 0, total = 0;
 	double t0 = Now();
-	while( Now() - t0 < 0.4 && total < sizeof( buf ) )
+	while( Now() - t0 < 0.4 && total < (int)sizeof( buf ) )
 	{
-		if( !::ReadFile( h, buf + total, sizeof( buf ) - total, &got, nullptr ) ) break;
+		got = serial::Read( h, buf + total, (int)sizeof( buf ) - total );
+		if( got < 0 ) break;
 		total += got;
 		if( total >= 10 ) break;
 		if( got == 0 && total > 0 ) break;
 	}
-	for( DWORD i = 0; i + 4 < total; ++i )
+	for( int i = 0; i + 4 < total; ++i )
 		if( buf[ i ] == 0x7E && buf[ i + 1 ] == 3 )
 		{
 			if( info && i + 9 < total )
@@ -230,10 +170,10 @@ std::string DmxIO::DetectEnttec( std::string* info )
 	{
 		if( !p.ftdi ) continue;
 		if( p.port == comName_ && com_ ) return p.port;//already ours
-		HANDLE h = OpenCom( p.port );
+		void* h = serial::Open( p.port );
 		if( !h ) continue;
 		bool ok = ProbeEnttec( h, info );
-		CloseHandle( h );
+		serial::Close( h );
 		if( ok ) return p.port;
 	}
 	return "";
@@ -253,7 +193,7 @@ bool DmxIO::OpenEnttec( const std::string& port )
 			return false;
 		}
 	}
-	HANDLE h = OpenCom( p );
+	void* h = serial::Open( p );
 	if( !h )
 	{
 		std::lock_guard< std::mutex > l( statusLock_ );
@@ -270,7 +210,7 @@ bool DmxIO::OpenEnttec( const std::string& port )
 }
 void DmxIO::CloseEnttec()
 {
-	if( com_ ) CloseHandle( (HANDLE)com_ );
+	if( com_ ) serial::Close( com_ );
 	com_       = nullptr;
 	enttecOpen = false;
 }
@@ -279,36 +219,29 @@ void DmxIO::CloseEnttec()
 void DmxIO::OpenSockets()
 {
 	CloseSockets();
-	SOCKET s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-	if( s != INVALID_SOCKET )
+	net::Sock s = net::Udp();
+	if( s != net::kInvalid )
 	{
-		BOOL b = TRUE;
-		setsockopt( s, SOL_SOCKET, SO_BROADCAST, (const char*)&b, sizeof( b ) );
+		net::SetBroadcast( s );
 		sockaddr_in a{};
-		a.sin_family = AF_INET;
-		inet_pton( AF_INET, cfg_.artnetBind.empty() ? "0.0.0.0" : cfg_.artnetBind.c_str(), &a.sin_addr );
-		a.sin_port = 0;
-		bind( s, (sockaddr*)&a, sizeof( a ) );
-		int len = sizeof( a );
-		getsockname( s, (sockaddr*)&a, &len );
+		net::Addr( cfg_.artnetBind.empty() ? "0.0.0.0" : cfg_.artnetBind.c_str(), 0, a );
+		net::Bind( s, a );
+		net::LocalAddr( s, a );
 		sendPort_ = ntohs( a.sin_port );
-		sendSock_ = (uintptr_t)s;
+		sendSock_ = net::ToU( s );
 	}
 	if( cfg_.sacn )
 	{
-		SOCKET m = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-		if( m != INVALID_SOCKET )
+		net::Sock m = net::Udp();
+		if( m != net::kInvalid )
 		{
 			sockaddr_in a{};
-			a.sin_family = AF_INET;
-			inet_pton( AF_INET, cfg_.artnetBind.empty() ? "0.0.0.0" : cfg_.artnetBind.c_str(), &a.sin_addr );
-			bind( m, (sockaddr*)&a, sizeof( a ) );
-			DWORD ttl = 8;
-			setsockopt( m, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof( ttl ) );
-			if( a.sin_addr.s_addr != INADDR_ANY ) setsockopt( m, IPPROTO_IP, IP_MULTICAST_IF, (const char*)&a.sin_addr, sizeof( a.sin_addr ) );
-			DWORD loop = acceptLoopback ? 1 : 0;
-			setsockopt( m, IPPROTO_IP, IP_MULTICAST_LOOP, (const char*)&loop, sizeof( loop ) );
-			sacnSock_ = (uintptr_t)m;
+			net::Addr( cfg_.artnetBind.empty() ? "0.0.0.0" : cfg_.artnetBind.c_str(), 0, a );
+			net::Bind( m, a );
+			net::SetMulticastTtl( m, 8 );
+			if( a.sin_addr.s_addr != INADDR_ANY ) net::SetMulticastIf( m, a.sin_addr );
+			net::SetMulticastLoop( m, acceptLoopback );
+			sacnSock_ = net::ToU( m );
 		}
 		if( !cid_[ 0 ] && !cid_[ 15 ] )
 		{
@@ -320,24 +253,18 @@ void DmxIO::OpenSockets()
 	}
 	if( cfg_.artnetInput )
 	{
-		SOCKET r = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-		if( r != INVALID_SOCKET )
+		net::Sock r = net::Udp();
+		if( r != net::kInvalid )
 		{
-			BOOL b = TRUE;
-			setsockopt( r, SOL_SOCKET, SO_REUSEADDR, (const char*)&b, sizeof( b ) );
-			setsockopt( r, SOL_SOCKET, SO_BROADCAST, (const char*)&b, sizeof( b ) );
-			DWORD tmo = 200;
-			setsockopt( r, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof( tmo ) );
-			sockaddr_in a{};
-			a.sin_family      = AF_INET;
-			a.sin_addr.s_addr = INADDR_ANY;
-			a.sin_port        = htons( 6454 );
-			if( bind( r, (sockaddr*)&a, sizeof( a ) ) == 0 )
-				recvSock_ = (uintptr_t)r;
+			net::SetReuse( r );//SO_REUSEADDR (+ SO_REUSEPORT on macOS): share 6454 with other Art-Net programs
+			net::SetBroadcast( r );
+			net::SetRecvTimeout( r, 200 );
+			if( net::Bind( r, net::Addr( htonl( INADDR_ANY ), 6454 ) ) )
+				recvSock_ = net::ToU( r );
 			else
 			{
-				Log( "artnet: bind 6454 failed (%d)", WSAGetLastError() );
-				closesocket( r );
+				Log( "artnet: bind 6454 failed (%d)", net::LastError() );
+				net::Close( r );
 				std::lock_guard< std::mutex > l( statusLock_ );
 				status_ = L( "Art-Net Eingang: Port 6454 belegt" );
 			}
@@ -346,24 +273,23 @@ void DmxIO::OpenSockets()
 }
 void DmxIO::CloseSockets()
 {
-	if( sendSock_ != ~(uintptr_t)0 ) closesocket( (SOCKET)sendSock_ );
-	if( recvSock_ != ~(uintptr_t)0 ) closesocket( (SOCKET)recvSock_ );
-	if( sacnSock_ != ~(uintptr_t)0 ) closesocket( (SOCKET)sacnSock_ );
+	net::Close( net::FromU( sendSock_ ) );
+	net::Close( net::FromU( recvSock_ ) );
+	net::Close( net::FromU( sacnSock_ ) );
 	sendSock_ = recvSock_ = sacnSock_ = ~(uintptr_t)0;
 }
 
 void DmxIO::Start( Show* show )
 {
 	Stop();
-	WSADATA wd;
-	WSAStartup( MAKEWORD( 2, 2 ), &wd );
+	net::Startup();
 	show_ = show;
 	{
 		std::lock_guard< std::mutex > l( cfgLock_ );
 		cfg_ = show->output;
 	}
 	OpenSockets();
-	if( !outEvent_ ) outEvent_ = CreateEventW( nullptr, FALSE, FALSE, nullptr );
+	if( !outEvent_ ) outEvent_ = EventCreate();
 	run_ = true;
 	out_ = std::thread( [ this ] { OutLoop(); } );
 	in_  = std::thread( [ this ] { InLoop(); } );
@@ -372,7 +298,7 @@ void DmxIO::Stop()
 {
 	if( !run_ ) return;
 	run_ = false;
-	if( outEvent_ ) SetEvent( (HANDLE)outEvent_ );//wake the output thread at once (it may wait for the next refresh)
+	if( outEvent_ ) EventSignal( outEvent_ );//wake the output thread at once (it may wait for the next refresh)
 	if( out_.joinable() ) out_.join();
 	if( in_.joinable() ) in_.join();
 	CloseSockets();
@@ -386,7 +312,7 @@ void DmxIO::Kick( double inputT )
 		if( pendingT_ <= 0 || inputT < pendingT_ ) pendingT_ = inputT;
 	}
 	kick_ = true;
-	if( outEvent_ ) SetEvent( (HANDLE)outEvent_ );
+	if( outEvent_ ) EventSignal( outEvent_ );
 }
 DmxIO::Latency DmxIO::GetLatency()
 {
@@ -416,7 +342,7 @@ void DmxIO::Apply()
 	std::lock_guard< std::mutex > l( cfgLock_ );
 	cfg_      = show_->output;
 	reconfig_ = true;
-	if( outEvent_ ) SetEvent( (HANDLE)outEvent_ );//wake the output thread: new rate / targets apply at once
+	if( outEvent_ ) EventSignal( outEvent_ );//wake the output thread: new rate / targets apply at once
 }
 
 std::string DmxIO::Status()
@@ -427,17 +353,20 @@ std::string DmxIO::Status()
 
 void DmxIO::OutLoop()
 {
+#ifdef _WIN32
 	timeBeginPeriod( 1 );
+	HANDLE mmcss  = nullptr;
+#endif
 	double next = Now();
 	bool lastEnttecWanted = false;
 	std::string lastPort;
 	bool boosted  = false;
-	HANDLE mmcss  = nullptr;
 	while( run_ )
 	{
 		if( boost != boosted )
 		{
 			boosted = boost;
+#ifdef _WIN32
 			if( boosted )
 			{
 				DWORD idx = 0;
@@ -450,6 +379,10 @@ void DmxIO::OutLoop()
 				mmcss = nullptr;
 				SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_NORMAL );
 			}
+#elif defined( __APPLE__ )
+			//MACOS-UNTESTED: performance mode = highest QoS class (no MMCSS on macOS)
+			pthread_set_qos_class_self_np( boosted ? QOS_CLASS_USER_INTERACTIVE : QOS_CLASS_DEFAULT, 0 );
+#endif
 		}
 		OutputCfg cfg;
 		{
@@ -503,15 +436,13 @@ void DmxIO::OutLoop()
 		if( cfg.artnet && sendSock_ != ~(uintptr_t)0 )
 		{
 			sockaddr_in to{};
-			to.sin_family = AF_INET;
-			to.sin_port   = htons( 6454 );
-			if( inet_pton( AF_INET, cfg.artnetTarget.c_str(), &to.sin_addr ) == 1 )
+			if( net::Addr( cfg.artnetTarget.c_str(), 6454, to ) )
 			{
 				for( auto& fr : frames )
 				{
 					if( !fr.first.artnetOut ) continue;
 					auto pkt = BuildArtDmx( fr.first.artnetPort, seq_, fr.second.data(), 512 );
-					if( sendto( (SOCKET)sendSock_, (const char*)pkt.data(), (int)pkt.size(), 0, (sockaddr*)&to, sizeof( to ) ) > 0 )
+					if( net::SendTo( net::FromU( sendSock_ ), pkt.data(), (int)pkt.size(), to ) > 0 )
 						++artnetSent;
 				}
 				seq_ = (uint8_t)( seq_ % 255 + 1 );
@@ -523,12 +454,10 @@ void DmxIO::OutLoop()
 			{
 				if( !fr.first.artnetOut ) continue;//"Out" in the patch list: Art-Net and sACN alike
 				sockaddr_in to{};
-				to.sin_family = AF_INET;
-				to.sin_port   = htons( 5568 );
 				const std::string ip = cfg.sacnTarget.empty() ? E131Multicast( fr.first.num ) : cfg.sacnTarget;
-				if( inet_pton( AF_INET, ip.c_str(), &to.sin_addr ) != 1 ) continue;
+				if( !net::Addr( ip.c_str(), 5568, to ) ) continue;
 				auto pkt = BuildE131( fr.first.num, sacnSeq_, cfg.sacnPriority, cid_, "Grosserd LightStage", fr.second.data(), 512 );
-				if( sendto( (SOCKET)sacnSock_, (const char*)pkt.data(), (int)pkt.size(), 0, (sockaddr*)&to, sizeof( to ) ) > 0 ) ++sacnSent;
+				if( net::SendTo( net::FromU( sacnSock_ ), pkt.data(), (int)pkt.size(), to ) > 0 ) ++sacnSent;
 			}
 			++sacnSeq_;
 		}
@@ -539,8 +468,7 @@ void DmxIO::OutLoop()
 				if( fr.first.num == cfg.enttecUniverse )
 				{
 					auto f = BuildEnttecDmx( fr.second.data(), 512 );
-					DWORD w = 0;
-					if( ::WriteFile( (HANDLE)com_, f.data(), (DWORD)f.size(), &w, nullptr ) && w == f.size() )
+					if( serial::Write( com_, f.data(), f.size() ) )
 						++enttecSent;
 					else
 					{
@@ -572,11 +500,13 @@ void DmxIO::OutLoop()
 			if( reconfig_ ) { next = now; break; }
 			double waitS = next - now;
 			if( kick_ ) waitS = std::min( waitS, 0.002 - ( now - lastSendT_ ) );
-			WaitForSingleObject( (HANDLE)outEvent_, (DWORD)std::max( 1.0, std::ceil( waitS * 1000.0 ) ) );
+			EventWait( outEvent_, (int)std::max( 1.0, std::ceil( waitS * 1000.0 ) ) );
 		}
 	}
+#ifdef _WIN32
 	if( mmcss ) AvRevertMmThreadCharacteristics( mmcss );
 	timeEndPeriod( 1 );
+#endif
 }
 
 void DmxIO::InLoop()
@@ -595,24 +525,27 @@ void DmxIO::InLoop()
 				freeaddrinfo( res );
 			}
 		}
+#ifndef _WIN32
+		//the host name often resolves to loopback only on macOS / Linux: add the interface addresses
+		for( auto& i : net::ListInterfaces() ) localIps.insert( i.ipNet );
+#endif
 		localIps.insert( htonl( INADDR_LOOPBACK ) );
 	}
 	std::vector< uint8_t > buf( 1500 );
 	while( run_ )
 	{
-		SOCKET r;
+		net::Sock r;
 		{
 			std::lock_guard< std::mutex > l( inLock_ );
-			r = recvSock_ == ~(uintptr_t)0 ? INVALID_SOCKET : (SOCKET)recvSock_;
+			r = net::FromU( recvSock_ );
 		}
-		if( r == INVALID_SOCKET )
+		if( r == net::kInvalid )
 		{
-			Sleep( 50 );
+			std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
 			continue;
 		}
 		sockaddr_in from{};
-		int fl = sizeof( from );
-		int n  = recvfrom( r, (char*)buf.data(), (int)buf.size(), 0, (sockaddr*)&from, &fl );
+		int n = net::RecvFrom( r, buf.data(), (int)buf.size(), &from );
 		if( n <= 0 ) continue;
 		//our own output (broadcast) comes back in: ignore it
 		bool own = localIps.count( from.sin_addr.s_addr ) && ntohs( from.sin_port ) == sendPort_;
@@ -626,7 +559,7 @@ void DmxIO::InLoop()
 			auto rep = ArtPollReply( ip, 4 );
 			sockaddr_in to = from;
 			to.sin_port    = htons( 6454 );
-			if( sendSock_ != ~(uintptr_t)0 ) sendto( (SOCKET)sendSock_, (const char*)rep.data(), (int)rep.size(), 0, (sockaddr*)&to, sizeof( to ) );
+			if( sendSock_ != ~(uintptr_t)0 ) net::SendTo( net::FromU( sendSock_ ), rep.data(), (int)rep.size(), to );
 			continue;
 		}
 		int port, len;

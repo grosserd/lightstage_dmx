@@ -1,7 +1,6 @@
 // fixture editor window (App methods)
 #include "app.h"
 #include "imgui.h"
-#include <windows.h>
 
 namespace ls
 {
@@ -65,7 +64,7 @@ void App::OpenFixtureEditor( const FixtureDef* d )
 bool App::SaveFixtureEditor( bool test )
 {
 	std::string id, path, err;
-	if( !SaveUserFixture( exeDir + "\\library", fxEd, id, path, &err ) )
+	if( !SaveUserFixture( exeDir + LS_SEP "library", fxEd, id, path, &err ) )
 	{
 		fxEdMsg_ = L( "Nicht gespeichert: " ) + err;
 		return false;

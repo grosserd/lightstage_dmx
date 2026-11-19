@@ -1,6 +1,7 @@
-// MIDI input (winmm): all input ports, events incl. derived 14-bit CC pairs (n / n+32)
+// MIDI input/output over the portable port backend (midi_port.h: winmm / CoreMIDI): all input ports, events incl. derived 14-bit CC pairs (n / n+32)
 #pragma once
 #include "show.h"
+#include "midi_port.h"
 #include <deque>
 
 namespace ls
@@ -17,7 +18,7 @@ struct MidiEvent
 	double t      = 0;//arrival time (Now())
 };
 
-class MidiIn
+class MidiIn : public midiport::Sink
 {
 public:
 	~MidiIn() { Close(); }
@@ -33,9 +34,11 @@ public:
 	//output helper for self tests (e.g. LoopBe1): returns false if no matching port
 	static bool SendShort( const std::string& portSubstr, uint8_t status, uint8_t d1, uint8_t d2 );
 	static std::vector< std::string > OutputPorts();
+	static bool SendSysEx( const std::string& portSubstr, const std::vector< uint8_t >& data );//data = F0 .. F7
 
 	struct Raw { int dev; uint32_t msg; double t = 0; };
 	void* wake = nullptr;//event (HANDLE) signalled when a message arrives (engine thread)
+	void ( *wakeFn )( void* ) = nullptr;//optional custom signal for `wake` (default: midiport::SignalWake)
 	std::map< std::string, double > lastActivity;//device -> Now() of the last message
 	//MIDI clock / transport messages since the last Poll (consumed by the tempo clock)
 	struct ClockMsg { std::string device; uint8_t status = 0; int spp = 0; double t = 0; };
@@ -51,6 +54,10 @@ public:
 	std::vector< Raw > queue_;
 	std::mutex lock_;
 
+	//backend callbacks (backend thread)
+	void OnShort( int dev, uint32_t msg, double t ) override;
+	void OnSysEx( int dev, const uint8_t* data, size_t len, double t ) override;
+
 private:
 	std::vector< void* > handles_;
 	std::map< int, std::array< uint8_t, 128 > > ccState_;//key = dev*16+ch
@@ -59,4 +66,20 @@ private:
 //apply one event to all matching mappings; returns number of hits
 int ApplyMidi( Show& show, const MidiEvent& e );
 bool MidiMatches( const MidiMap& m, const MidiEvent& e );
+
+//one MIDI output port kept open (e.g. MIDI clock in the self test)
+class MidiOut
+{
+public:
+	~MidiOut() { Close(); }
+	bool Open( const std::string& portSubstr );//first matching port that opens
+	void Close();
+	bool IsOpen() const { return h_ != nullptr; }
+	bool Send( uint8_t status, uint8_t d1 = 0, uint8_t d2 = 0 );
+	bool SendSysEx( const std::vector< uint8_t >& data );
+	std::string name;
+
+private:
+	void* h_ = nullptr;
+};
 }//namespace ls

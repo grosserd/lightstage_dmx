@@ -1,5 +1,6 @@
 // LightStage 2.0: audio for the show timeline - audio file (decode, waveform, playback) and LTC timecode
-// from an audio input (decoder + capture). Windows: Media Foundation (decode), waveOut / waveIn.
+// from an audio input (decoder + capture). Windows: Media Foundation (decode), waveOut / waveIn (audio_win.cpp);
+// macOS: ExtAudioFile, AudioQueue output / input (audio_mac.mm).
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -22,9 +23,11 @@ struct AudioData
 	double Seconds() const { return ch > 0 && rate > 0 ? (double)pcm.size() / ch / rate : 0; }
 	float PeakAt( double sec0, double sec1 ) const;//highest peak in a time span, 0..1
 };
-bool LoadAudioFile( const std::string& file, AudioData& out, std::string& err );
+bool LoadAudioFile( const std::string& file, AudioData& out, std::string& err );//decode + peaks
+//platform decoder: fills rate, ch and pcm (16 bit interleaved); err = English reason
+bool DecodeAudioFile( const std::string& file, AudioData& out, std::string& err );
 
-//plays AudioData from a position (own thread, waveOut)
+//plays AudioData from a position (own thread; waveOut / AudioQueue); Position() follows the device clock
 class AudioPlayer
 {
 public:
@@ -40,6 +43,7 @@ public:
 
 private:
 	void Loop( double sec );
+	void Fill( int16_t* o, int frames, int ch, long long& cur, const AudioData& d ) const;//frames from 'cur' on, gain applied
 	std::shared_ptr< const AudioData > data_;
 	std::thread th_;
 	std::atomic< bool > run_{ false };
@@ -73,7 +77,7 @@ private:
 //test signal: frames of LTC starting at h:m:s:f (biphase mark, +-amp)
 void LtcEncode( int h, int m, int s, int f, int fps, int rate, int frames, float amp, std::vector< float >& out );
 
-//audio input -> LTC (own thread, waveIn)
+//audio input -> LTC (own thread; waveIn / AudioQueue input, 48 kHz stereo 16 bit)
 class LtcInput
 {
 public:
@@ -91,6 +95,7 @@ public:
 
 private:
 	void Loop( int devIdx );
+	void Process( const int16_t* s, int n, int ch, LtcDecoder& dec, std::vector< float >& x );//one captured block
 	std::thread th_;
 	std::atomic< bool > run_{ false };
 	std::string dev_;

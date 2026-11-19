@@ -3,9 +3,9 @@
 #include "audio.h"
 #include "json.h"
 #include "xmlzip.h"
+#include "platform.h"
 #include "../third_party/stb_image_write.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "netsock.h"
 #include <windows.h>
 #include <mmsystem.h>
 
@@ -902,7 +902,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			std::lock_guard< std::mutex > l( app.midi.lock_ );
 			app.midi.queue_.push_back( { 0, 0xB0u | ( 77u << 8 ) | ( 100u << 16 ), t0 } );
 		}
-		SetEvent( (HANDLE)app.EngineEvent() );
+		EventSignal( app.EngineEvent() );
 		while( Now() - t0 < 0.5 && ( tApplied < 0 || tSent < 0 ) )
 		{
 			if( tApplied < 0 )
@@ -925,7 +925,7 @@ int RunSelfTest( App& app, const std::string& dir )
 			for( int i = 0; i < 200; ++i ) app.midi.queue_.push_back( { 0, 0xB0u | ( 77u << 8 ) | ( (uint32_t)( i % 128 ) << 16 ), Now() } );
 			app.midi.queue_.push_back( { 0, 0xB0u | ( 77u << 8 ) | ( 10u << 16 ), Now() } );
 		}
-		SetEvent( (HANDLE)app.EngineEvent() );
+		EventSignal( app.EngineEvent() );
 		Sleep( 20 );
 		int v = -1;
 		{
@@ -1104,22 +1104,20 @@ int RunSelfTest( App& app, const std::string& dir )
 		app.io.acceptLoopback = true;
 		app.io.Apply();
 		Sleep( 300 );
-		SOCKET so = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+		net::Sock so = net::Udp();
 		sockaddr_in to{};
-		to.sin_family = AF_INET;
-		to.sin_port   = htons( 6454 );
-		inet_pton( AF_INET, "127.0.0.1", &to.sin_addr );
+		net::Addr( "127.0.0.1", 6454, to );
 		auto p2 = BuildArtDmx( 100, 1, d, 512 );
 		bool got = false;
 		for( int tries = 0; tries < 20 && !got; ++tries )
 		{
-			sendto( so, (const char*)p2.data(), (int)p2.size(), 0, (sockaddr*)&to, sizeof( to ) );
+			net::SendTo( so, p2.data(), (int)p2.size(), to );
 			Sleep( 50 );
 			app.io.PollInput();
 			DmxFrame* fr = s.Frame( un );
 			got          = fr && memcmp( fr->data(), d, 512 ) == 0;
 		}
-		closesocket( so );
+		net::Close( so );
 		T( got, "Art-Net Eingang (Loopback 127.0.0.1, Port-Adresse 100) -> Universe %d", un );
 		uint64_t sent0 = app.io.artnetSent;
 		Sleep( 400 );
@@ -1150,14 +1148,11 @@ int RunSelfTest( App& app, const std::string& dir )
 		T( ok && pkt.size() == 638 && un == 258 && pr == 120 && len == 512 && memcmp( pd, d, 512 ) == 0 && rootLen == 622 && pkt[ 111 ] == 7 && !memcmp( &pkt[ 22 ], cid, 16 ) && E131Multicast( 258 ) == "239.255.1.2",
 		   "sACN-Paket korrekt (638 Byte, Universe 258 -> 239.255.1.2, Priorität 120)" );
 		//output to 127.0.0.1:5568; receive it if the port is free (Resolume & co. may hold it)
-		SOCKET rs = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+		net::Sock rs = net::Udp();
 		sockaddr_in a{};
-		a.sin_family = AF_INET;
-		a.sin_port   = htons( 5568 );
-		inet_pton( AF_INET, "127.0.0.1", &a.sin_addr );
-		DWORD tmo    = 100;
-		setsockopt( rs, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof( tmo ) );
-		const bool bound = bind( rs, (sockaddr*)&a, sizeof( a ) ) == 0;
+		net::Addr( "127.0.0.1", 5568, a );
+		net::SetRecvTimeout( rs, 100 );
+		const bool bound = net::Bind( rs, a );
 		{
 			std::lock_guard< std::mutex > l( s.dmxLock );
 			s.dmx[ 0 ][ 0 ] = 77;
@@ -1170,12 +1165,12 @@ int RunSelfTest( App& app, const std::string& dir )
 		for( int k = 0; k < 20 && bound && gotUni < 0; ++k )
 		{
 			uint8_t b[ 700 ];
-			const int n = recv( rs, (char*)b, sizeof( b ), 0 );
+			const int n = net::Recv( rs, b, sizeof( b ) );
 			if( n > 0 && ParseE131( b, n, un, pr, pd, len ) ) { gotUni = un; got0 = pd[ 0 ]; }
 		}
 		Sleep( 300 );
 		const uint64_t s1 = app.io.sacnSent;
-		closesocket( rs );
+		net::Close( rs );
 		if( bound ) T( s1 > s0 && gotUni == s.universes[ 0 ].num && got0 == 77, "sACN-Ausgang: %llu Pakete, empfangen Universe %d, Kanal 1 = %d", (unsigned long long)( s1 - s0 ), gotUni, got0 );
 		else T( s1 > s0, "sACN-Ausgang: %llu Pakete gesendet (Port 5568 von anderem Programm belegt, Empfang nicht geprüft)", (unsigned long long)( s1 - s0 ) );
 		s.output.sacn = false;
@@ -1193,6 +1188,9 @@ int RunSelfTest( App& app, const std::string& dir )
 		std::string pl;
 		for( auto& p : ports ) pl += p.port + "(" + p.name + ( p.ftdi ? ",FTDI" : "" ) + ") ";
 		Info( "COM-Ports: %s", pl.empty() ? "keine" : pl.c_str() );
+		std::string nl;
+		for( auto& i : net::ListInterfaces() ) nl += i.name + "=" + i.ip + "/" + i.netmask + ( i.up ? "" : "(down)" ) + " ";
+		Info( "Netzwerkkarten: %s", nl.empty() ? "keine" : nl.c_str() );
 	}
 	//---- MIDI via LoopBe1 (if installed)
 	{
@@ -1277,15 +1275,13 @@ int RunSelfTest( App& app, const std::string& dir )
 		T( up, "OSC-Empfang auf UDP %d gestartet %s", port, oi.error.c_str() );
 		if( up && sp )
 		{
-			SOCKET so = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+			net::Sock so = net::Udp();
 			sockaddr_in to{};
-			to.sin_family = AF_INET;
-			to.sin_port   = htons( port );
-			inet_pton( AF_INET, "127.0.0.1", &to.sin_addr );
+			net::Addr( "127.0.0.1", (uint16_t)port, to );
 			std::string sendLog;
 			auto send = [ & ]( const std::vector< uint8_t >& b ) {
-				int r = sendto( so, (const char*)b.data(), (int)b.size(), 0, (sockaddr*)&to, sizeof( to ) );
-				sendLog += std::to_string( r ) + ( r < 0 ? "/" + std::to_string( WSAGetLastError() ) : "" ) + " ";
+				int r = net::SendTo( so, b.data(), (int)b.size(), to );
+				sendLog += std::to_string( r ) + ( r < 0 ? "/" + std::to_string( net::LastError() ) : "" ) + " ";
 				Sleep( 2 );
 			};
 			s.SetAttr( *sp, Attr::Dimmer, 0 );
@@ -1313,7 +1309,7 @@ int RunSelfTest( App& app, const std::string& dir )
 				oi.Poll( ms );
 				for( auto& m : ms ) ( ApplyOsc( s, m ) ? applied : unknown )++;
 			}
-			closesocket( so );
+			net::Close( so );
 			DmxFrame* fr = s.Frame( 1 );
 			float dim = s.GetAttr( *sp, Attr::Dimmer ), zm = s.GetAttr( *sp, Attr::Zoom );
 			T( applied == 4 && unknown == 1, "OSC: %d Nachrichten angewendet, %d unbekannte Adresse ignoriert (%d fehlerhaft, gesendet: %s)", applied, unknown, (int)oi.bad, sendLog.c_str() );
@@ -1377,23 +1373,19 @@ int RunSelfTest( App& app, const std::string& dir )
 		}
 		OscIn oi;
 		T( oi.Start( oscPort ), "Bridge: OSC-Eingang auf UDP %d", oscPort );
-		SOCKET cs = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+		net::Sock cs = net::Udp();
 		sockaddr_in me{}, to{};
-		me.sin_family = to.sin_family = AF_INET;
-		me.sin_port                    = htons( clientPort );
-		to.sin_port                    = htons( oscPort );
-		inet_pton( AF_INET, "127.0.0.1", &me.sin_addr );
-		inet_pton( AF_INET, "127.0.0.1", &to.sin_addr );
-		bind( cs, (sockaddr*)&me, sizeof( me ) );
-		DWORD tmo1 = 1;
-		setsockopt( cs, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo1, sizeof( tmo1 ) );
-		auto send = [ & ]( const std::vector< uint8_t >& b ) { sendto( cs, (const char*)b.data(), (int)b.size(), 0, (sockaddr*)&to, sizeof( to ) ); };
+		net::Addr( "127.0.0.1", (uint16_t)clientPort, me );
+		net::Addr( "127.0.0.1", (uint16_t)oscPort, to );
+		net::Bind( cs, me );
+		net::SetRecvTimeout( cs, 1 );
+		auto send = [ & ]( const std::vector< uint8_t >& b ) { net::SendTo( cs, b.data(), (int)b.size(), to ); };
 		std::vector< OscMsg > inbox;
 		auto recvAll = [ & ] {
 			std::vector< char > buf( 65536 );
 			for( ;; )
 			{
-				int n = recv( cs, buf.data(), (int)buf.size(), 0 );
+				int n = net::Recv( cs, buf.data(), (int)buf.size() );
 				if( n <= 0 ) break;
 				std::vector< OscMsg > ms;
 				if( ParseOsc( (const uint8_t*)buf.data(), n, ms ) ) inbox.insert( inbox.end(), ms.begin(), ms.end() );
@@ -1417,23 +1409,20 @@ int RunSelfTest( App& app, const std::string& dir )
 			}
 		};
 		auto httpGet = [ & ]( const char* path ) -> std::string {
-			SOCKET h = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+			net::Sock h = net::Tcp();
 			sockaddr_in a{};
-			a.sin_family = AF_INET;
-			a.sin_port   = htons( httpPort );
-			inet_pton( AF_INET, "127.0.0.1", &a.sin_addr );
-			DWORD tmo = 3000;
-			setsockopt( h, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof( tmo ) );
+			net::Addr( "127.0.0.1", (uint16_t)httpPort, a );
+			net::SetRecvTimeout( h, 3000 );
 			std::string resp;
-			if( connect( h, (sockaddr*)&a, sizeof( a ) ) == 0 )
+			if( net::Connect( h, a ) )
 			{
 				std::string req = std::string( "GET " ) + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-				::send( h, req.data(), (int)req.size(), 0 );
+				net::Send( h, req.data(), (int)req.size() );
 				char buf[ 8192 ];
 				int n;
-				while( ( n = recv( h, buf, sizeof( buf ), 0 ) ) > 0 ) resp.append( buf, n );
+				while( ( n = net::Recv( h, buf, sizeof( buf ) ) ) > 0 ) resp.append( buf, n );
 			}
-			closesocket( h );
+			net::Close( h );
 			const size_t p = resp.find( "\r\n\r\n" );
 			return p == std::string::npos ? std::string() : resp.substr( p + 4 );
 		};
@@ -1751,7 +1740,7 @@ int RunSelfTest( App& app, const std::string& dir )
 		s.master = masterBefore;
 		s.stage.exposure = expBefore;
 		s.Bump();
-		closesocket( cs );
+		net::Close( cs );
 		oi.Stop();
 	}
 	//---- effects per OSC / MIDI / bridge: every editor setting is a register entry
@@ -2084,15 +2073,8 @@ int RunSelfTest( App& app, const std::string& dir )
 		}
 		//MIDI clock end to end over the LoopBe port (if installed)
 		{
-			HMIDIOUT h = nullptr;
-			UINT nd    = midiOutGetNumDevs();
-			for( UINT i = 0; i < nd && !h; ++i )
-			{
-				MIDIOUTCAPSA c{};
-				midiOutGetDevCapsA( i, &c, sizeof( c ) );
-				if( ToLower( c.szPname ).find( "loopbe" ) != std::string::npos && midiOutOpen( &h, i, 0, 0, CALLBACK_NULL ) != MMSYSERR_NOERROR ) h = nullptr;
-			}
-			if( h )
+			MidiOut h;
+			if( h.Open( "loopbe" ) )
 			{
 				std::vector< MidiEvent > ev;
 				app.midi.Poll( ev );
@@ -2100,15 +2082,15 @@ int RunSelfTest( App& app, const std::string& dir )
 				Tempo c;
 				c.source        = TempoSource::MidiClock;
 				const double per = 60.0 / ( 120.0 * 24.0 );
-				midiOutShortMsg( h, 0xFA );
+				h.Send( 0xFA );
 				const double t0 = Now();
 				for( int i = 0; i < 72; ++i )
 				{
 					while( Now() < t0 + ( i + 1 ) * per ) Sleep( 0 );
-					midiOutShortMsg( h, 0xF8 );
+					h.Send( 0xF8 );
 				}
 				Sleep( 60 );
-				midiOutClose( h );
+				h.Close();
 				ev.clear();
 				app.midi.Poll( ev );
 				int nClock = 0;

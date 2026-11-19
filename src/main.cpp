@@ -2,6 +2,7 @@
 // entry point: GLFW window, OpenGL core context (4.3 on Windows, 4.1 on macOS), Dear ImGui, command line modes
 #include "app.h"
 #include "imgui.h"
+#include "platform.h"
 #include <GL/glew.h>
 #include "backends/imgui_impl_opengl3.h"
 #include "backends/imgui_impl_glfw.h"
@@ -20,9 +21,6 @@
 #include <shellapi.h>
 #include <dbghelp.h>
 #pragma comment( lib, "dbghelp.lib" )
-#else
-#include <sys/stat.h>
-#include <unistd.h>
 #endif
 
 namespace ls
@@ -31,11 +29,6 @@ int RunSelfTest( App& app, const std::string& dir );
 }
 using namespace ls;
 
-#ifdef _WIN32
-static const char* const kPathSep = "\\";
-#else
-static const char* const kPathSep = "/";
-#endif
 static App* g_app = nullptr;
 static bool g_running = true;
 static bool g_uiTest  = false;//scripted UI test: the real mouse / keyboard / focus changes do not reach the UI
@@ -84,11 +77,7 @@ static void StartHangWatch() {}
 static void FatalMessage( const std::string& msg )
 {
 	Log( "%s", msg.c_str() );
-#ifdef _WIN32
-	MessageBoxW( nullptr, Widen( msg ).c_str(), L"LightStage", MB_ICONERROR );
-#else
-	fprintf( stderr, "LightStage: %s\n", msg.c_str() );
-#endif
+	ShowError( msg );
 }
 
 //---- GLFW callbacks. The UI test (g_uiTest) does not install the ImGui input callbacks: the real mouse,
@@ -257,7 +246,7 @@ static int RunLightStage( const std::vector< std::string >& av )
 	{
 		std::string txt;
 		Json j;
-		if( ReadText( ExeDir() + "\\settings.json", txt ) && ParseJson( txt, j, nullptr ) ) SetLang( j[ "language" ].Str( "en" ) );
+		if( ReadText( ExeDir() + LS_SEP "settings.json", txt ) && ParseJson( txt, j, nullptr ) ) SetLang( j[ "language" ].Str( "en" ) );
 	}
 	if( !lang.empty() ) SetLang( lang );
 	if( selftest ) gLang = kLangDe;
@@ -310,10 +299,8 @@ static int RunLightStage( const std::vector< std::string >& av )
 		SendMessageW( hwnd, WM_SETICON, ICON_BIG, (LPARAM)LoadIconW( inst, MAKEINTRESOURCEW( 1 ) ) );
 		SendMessageW( hwnd, WM_SETICON, ICON_SMALL, (LPARAM)LoadImageW( inst, MAKEINTRESOURCEW( 1 ), IMAGE_ICON, GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ), 0 ) );
 	}
-	void* nativeWnd = hwnd;//file dialogs and message boxes are owned by it
-#else
-	void* nativeWnd = win;
 #endif
+	PlatformInit( win );//file dialogs and message boxes are owned by it
 	const char* ver = (const char*)glGetString( GL_VERSION );
 	const char* ren = (const char*)glGetString( GL_RENDERER );
 	Log( "OpenGL %s on %s", ver ? ver : "?", ren ? ren : "?" );
@@ -343,7 +330,7 @@ static int RunLightStage( const std::vector< std::string >& av )
 	App app;
 	g_app            = &app;
 	app.ui           = scale;
-	std::string fdir = ExeDir() + "\\assets\\fonts\\";
+	std::string fdir = ExeDir() + LS_SEP "assets" LS_SEP "fonts" LS_SEP;
 	ImFontConfig fc;
 	fc.OversampleH = 2;
 	//Latin + Latin-1, general punctuation (› – … •), arrows, a few math signs (× ≤ ≥)
@@ -356,7 +343,7 @@ static int RunLightStage( const std::vector< std::string >& av )
 	if( !app.fontBig ) app.fontBig = app.fontUi;
 
 	std::string err;
-	if( !app.Init( nativeWnd, &err ) )
+	if( !app.Init( &err ) )
 	{
 		Log( "init failed: %s", err.c_str() );
 		FatalMessage( L( "Renderer konnte nicht starten:\n" ) + err );
@@ -382,17 +369,13 @@ static int RunLightStage( const std::vector< std::string >& av )
 	else if( demo ) app.BuildDemo();
 	if( !showcaseDir.empty() )
 	{
-#ifdef _WIN32
-		CreateDirectoryW( Widen( showcaseDir ).c_str(), nullptr );
-#else
-		mkdir( showcaseDir.c_str(), 0755 );
-#endif
+		MakeDir( showcaseDir );
 		int ok = 0;
 		for( int k = 0; k < 6; ++k )
 		{
 			std::string title, e;
 			if( !app.BuildShowcase( k, title ) ) continue;
-			const std::string file = showcaseDir + kPathSep + title + ".lightstage";
+			const std::string file = showcaseDir + LS_SEP + title + ".lightstage";
 			if( app.show.Save( file, &e ) ) ++ok;
 			Log( "showcase %d: %s %s", k + 1, file.c_str(), e.c_str() );
 		}
@@ -411,7 +394,7 @@ static int RunLightStage( const std::vector< std::string >& av )
 				}
 			app.show.tl.Locate( app.show, 0 );
 			std::string e;
-			const std::string file = showcaseDir + kPathSep + "06 Show Time Line - Cues, Clips & Fans.lightstage";
+			const std::string file = showcaseDir + LS_SEP + "06 Show Time Line - Cues, Clips & Fans.lightstage";
 			if( app.show.Save( file, &e ) ) ++ok;
 			Log( "showcase 6: %s %s", file.c_str(), e.c_str() );
 		}

@@ -1690,14 +1690,15 @@ void Library::LoadAll( const std::string& root )
 	auto loadDir = [ & ]( const std::string& dir, const std::string& prefix ) {
 		std::string mtxt;
 		Json mj;
-		if( ReadText( dir + "\\manufacturers.json", mtxt ) && ParseJson( mtxt, mj ) )
+		if( ReadText( dir + LS_SEP "manufacturers.json", mtxt ) && ParseJson( mtxt, mj ) )
 			for( auto& kv : mj.o )
 				mfNames[ kv.first ] = kv.second[ "name" ].Str( kv.first );
 		for( auto& f : ListFiles( dir, ".json", true ) )
 		{
 			std::string rel = f.substr( dir.size() + 1 );
-			if( rel == "manufacturers.json" || rel.find( '\\' ) == std::string::npos ) continue;
-			std::string mf  = rel.substr( 0, rel.find( '\\' ) );
+			const size_t sep = rel.find_first_of( "\\/" );//ListFiles gives native separators
+			if( rel == "manufacturers.json" || sep == std::string::npos ) continue;
+			std::string mf  = rel.substr( 0, sep );
 			std::string txt, err;
 			Json j;
 			if( !ReadText( f, txt ) || !ParseJson( txt, j, &err ) ) { ++bad; Log( "fixture parse error %s: %s", f.c_str(), err.c_str() ); continue; }
@@ -1713,10 +1714,10 @@ void Library::LoadAll( const std::string& root )
 			else { ++bad; Log( "fixture error %s: %s", f.c_str(), err.c_str() ); }
 		}
 	};
-	loadDir( root + "\\user", "user/" );//own fixtures from the fixture editor
-	loadDir( root + "\\generic", "generic/" );
-	loadDir( root + "\\ofl", "ofl/" );
-	for( auto& f : ListFiles( root + "\\gdtf", ".gdtf", true ) )
+	loadDir( root + LS_SEP "user", "user/" );//own fixtures from the fixture editor
+	loadDir( root + LS_SEP "generic", "generic/" );
+	loadDir( root + LS_SEP "ofl", "ofl/" );
+	for( auto& f : ListFiles( root + LS_SEP "gdtf", ".gdtf", true ) )
 	{
 		auto d = std::make_unique< FixtureDef >();
 		std::string err;

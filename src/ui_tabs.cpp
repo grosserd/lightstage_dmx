@@ -1,9 +1,7 @@
 // bottom panel tabs (DMX, MIDI, Output, Stage, Snapshots) and the fixture library dialog
 #include "app.h"
 #include "imgui.h"
-#include <windows.h>
-#include <commdlg.h>
-#include <shellapi.h>
+#include "platform.h"
 
 namespace ls
 {
@@ -206,17 +204,8 @@ void App::TabDmx()
 //---------------------------------------------------------------- MIDI
 static std::string MidiFileDialog( bool save )
 {
-	wchar_t buf[ MAX_PATH * 4 ] = {};
-	OPENFILENAMEW of{};
-	of.lStructSize = sizeof( of );
-	of.hwndOwner   = GetActiveWindow();
-	of.lpstrFilter = LW( L"LightStage MIDI-Mapping (*.lsmidi)\0*.lsmidi\0Alle Dateien\0*.*\0" );
-	of.lpstrFile   = buf;
-	of.nMaxFile    = MAX_PATH * 4;
-	of.lpstrDefExt = L"lsmidi";
-	of.Flags       = OFN_NOCHANGEDIR | OFN_EXPLORER | ( save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST );
-	BOOL ok        = save ? GetSaveFileNameW( &of ) : GetOpenFileNameW( &of );
-	return ok ? Narrow( buf ) : std::string();
+	const FileFilters f = FilterList( L( "LightStage MIDI-Mapping (*.lsmidi)\0*.lsmidi\0Alle Dateien\0*.*\0" ) );
+	return save ? SaveFileDialog( f, "lsmidi" ) : OpenFileDialog( f, "lsmidi" );
 }
 
 void App::TabMidi()
@@ -529,7 +518,7 @@ void App::TabBridge()
 	if( ImGui::Button( L( "Im Browser öffnen" ) ) )
 	{
 		const std::string url = "http://127.0.0.1:" + std::to_string( bridgeHttpPort ) + "/";
-		ShellExecuteA( nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL );
+		OpenUrl( url );
 	}
 }
 
@@ -1225,15 +1214,8 @@ void App::TabStage()
 	ImGui::SameLine();
 	if( ImGui::SmallButton( L( "+ Importieren..." ) ) )
 	{
-		wchar_t buf[ MAX_PATH * 4 ] = {};
-		OPENFILENAMEW of{};
-		of.lStructSize = sizeof( of );
-		of.hwndOwner   = (HWND)hwnd;
-		of.lpstrFilter = LW( L"3D-Modelle (*.glb;*.gltf;*.fbx;*.obj)\0*.glb;*.gltf;*.fbx;*.obj\0" );
-		of.lpstrFile   = buf;
-		of.nMaxFile    = MAX_PATH * 4;
-		of.Flags       = OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_EXPLORER;
-		if( GetOpenFileNameW( &of ) ) DropFile( Narrow( buf ) );
+		const std::string p = OpenFileDialog( FilterList( L( "3D-Modelle (*.glb;*.gltf;*.fbx;*.obj)\0*.glb;*.gltf;*.fbx;*.obj\0" ) ) );
+		if( !p.empty() ) DropFile( p );
 	}
 	int mdel = -1;
 	for( int i = 0; i < (int)show.models.size(); ++i )
@@ -2152,21 +2134,13 @@ void App::LibraryPopup()
 	ImGui::SameLine();
 	if( ImGui::Button( L( "GDTF importieren..." ) ) )
 	{
-		wchar_t buf[ MAX_PATH * 4 ] = {};
-		OPENFILENAMEW of{};
-		of.lStructSize = sizeof( of );
-		of.hwndOwner   = (HWND)hwnd;
-		of.lpstrFilter = L"GDTF (*.gdtf)\0*.gdtf\0";
-		of.lpstrFile   = buf;
-		of.nMaxFile    = MAX_PATH * 4;
-		of.Flags       = OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_EXPLORER;
-		if( GetOpenFileNameW( &of ) )
+		const std::string p = OpenFileDialog( FilterList( "GDTF (*.gdtf)\0*.gdtf\0" ) );
+		if( !p.empty() )
 		{
-			std::string p = Narrow( buf );
 			//keep a copy in the library so the show can find it again
-			std::string dst = exeDir + "\\library\\gdtf\\" + FileName( p );
-			CreateDirectoryW( Widen( exeDir + "\\library\\gdtf" ).c_str(), nullptr );
-			CopyFileW( Widen( p ).c_str(), Widen( dst ).c_str(), FALSE );
+			std::string dst = exeDir + LS_SEP "library" LS_SEP "gdtf" LS_SEP + FileName( p );
+			MakeDir( exeDir + LS_SEP "library" LS_SEP "gdtf" );
+			CopyFileReplace( p, dst );
 			const FixtureDef* d = lib.LoadGdtf( dst );
 			if( d ) { add_.def = d; add_.lastSearch = "\x01"; }
 			else SetStatus( L( "GDTF-Fehler: " ) + lib.lastError );
@@ -2548,15 +2522,8 @@ void App::ProjectorUi( Projector& p, int idx )
 		{
 			if( ImGui::Button( L( "Datei wählen..." ) ) )
 			{
-				wchar_t buf[ MAX_PATH * 4 ] = {};
-				OPENFILENAMEW of{};
-				of.lStructSize = sizeof( of );
-				of.hwndOwner   = (HWND)hwnd;
-				of.lpstrFilter = LW( L"Videos (*.mp4;*.mov;*.m4v;*.wmv;*.avi;*.mkv)\0*.mp4;*.mov;*.m4v;*.wmv;*.avi;*.mkv\0Alle Dateien\0*.*\0" );
-				of.lpstrFile   = buf;
-				of.nMaxFile    = MAX_PATH * 4;
-				of.Flags       = OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_EXPLORER;
-				if( GetOpenFileNameW( &of ) ) { p.file = Narrow( buf ); ch = true; }
+				const std::string f = OpenFileDialog( FilterList( L( "Videos (*.mp4;*.mov;*.m4v;*.wmv;*.avi;*.mkv)\0*.mp4;*.mov;*.m4v;*.wmv;*.avi;*.mkv\0Alle Dateien\0*.*\0" ) ) );
+				if( !f.empty() ) { p.file = f; ch = true; }
 			}
 			ImGui::SameLine();
 			ch |= ImGui::Checkbox( L( "Schleife" ), &p.loop );
@@ -2723,15 +2690,7 @@ void App::ScreenUi( Screen& s, int idx )
 		//---- shape from an image (white = screen)
 		ImGui::SeparatorText( L( "Form" ) );
 		auto pickMask = [ & ]() {
-			wchar_t buf[ MAX_PATH * 4 ] = {};
-			OPENFILENAMEW of{};
-			of.lStructSize = sizeof( of );
-			of.hwndOwner   = (HWND)hwnd;
-			of.lpstrFilter = LW( L"Bilder (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Alle Dateien\0*.*\0" );
-			of.lpstrFile   = buf;
-			of.nMaxFile    = MAX_PATH * 4;
-			of.Flags       = OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_EXPLORER;
-			return GetOpenFileNameW( &of ) ? Narrow( buf ) : std::string();
+			return OpenFileDialog( FilterList( L( "Bilder (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Alle Dateien\0*.*\0" ) ) );
 		};
 		auto loadMask = [ & ]( const std::string& path ) {
 			if( path.empty() ) return;
