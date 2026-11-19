@@ -60,6 +60,29 @@ jobs:
           grep -F "[FAIL]" selftest.log | head -n 40 | sed 's/%/%25/g' | while read -r l; do echo "::warning title=Selftest FAIL::$l"; done
           if [ -f lightstage.log ]; then echo "::notice title=lightstage.log::$(tail -n 40 lightstage.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; fi
 
+      - name: Image probe
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          cd build/LightStage
+          python3 -m pip install --quiet --break-system-packages pillow >/dev/null 2>&1 || python3 -m pip install --quiet pillow >/dev/null 2>&1
+          for f in selftest_outdoor_sky.png selftest_outdoor_grass.png selftest_outdoor_concrete.png selftest_hall_ref.png; do
+            [ -f "$f" ] || continue
+            prof=$(python3 - "$f" <<'PY'
+          import sys
+          from PIL import Image
+          im = Image.open(sys.argv[1]).convert('RGB'); w, h = im.size
+          rows = []
+          for k in range(10):
+              y0, y1 = h * k // 10, h * (k + 1) // 10
+              px = [im.getpixel((x, y)) for y in range(y0, y1, 4) for x in range(0, w, 8)]
+              n = len(px); rows.append('%3d-%3d%%: R %3d G %3d B %3d' % (k*10, k*10+10, sum(p[0] for p in px)//n, sum(p[1] for p in px)//n, sum(p[2] for p in px)//n))
+          print('%dx%d%%0A' % (w, h) + '%0A'.join(rows))
+          PY
+          )
+            echo "::notice title=Image $f::$prof"
+          done
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
