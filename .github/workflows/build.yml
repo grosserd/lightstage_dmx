@@ -41,17 +41,24 @@ jobs:
         timeout-minutes: 10
         shell: bash
         run: |
+          set +e
           cd build/LightStage
           ./LightStage --selftest & pid=$!
-          for i in $(seq 1 480); do kill -0 $pid 2>/dev/null || break; sleep 1; done
-          if kill -0 $pid 2>/dev/null; then kill -9 $pid; echo "::error title=Selftest::timeout after 8 min"; fi
+          for i in $(seq 1 360); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+          if kill -0 $pid 2>/dev/null; then
+            echo "::error title=Selftest::timeout after 6 min"
+            sample $pid 3 -file sample.txt >/dev/null 2>&1
+            # main thread + other threads: the frames from LightStage's own code
+            echo "::warning title=Hang stack (LightStage frames)::$(grep -E 'ls::|main|Selftest|RunSelfTest' sample.txt | sed -E 's/^[ +!:|]*//' | head -n 40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            kill -9 $pid
+          fi
           wait $pid; echo "exit $?"
           tail -n 80 selftest.log || true
           # public annotations: summary + every failed check (readable without login)
           sum=$(grep -E "^[0-9]+ OK, [0-9]+ FAIL" selftest.log | tail -n 1)
-          echo "::notice title=Selftest macOS::${sum:-no summary (crash?)}%0A$(tail -n 3 selftest.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+          echo "::notice title=Selftest macOS::${sum:-no summary (crash?)}%0A$(tail -n 12 selftest.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
           grep -F "[FAIL]" selftest.log | head -n 40 | sed 's/%/%25/g' | while read -r l; do echo "::warning title=Selftest FAIL::$l"; done
-          if [ -f lightstage.log ]; then echo "::notice title=lightstage.log::$(tail -n 25 lightstage.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; fi
+          if [ -f lightstage.log ]; then echo "::notice title=lightstage.log::$(tail -n 40 lightstage.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; fi
 
       - name: Upload
         if: always()
