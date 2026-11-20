@@ -268,8 +268,11 @@ static int RunLightStage( const std::vector< std::string >& av )
 	const char* glslVersion  = "#version 410";
 	glfwWindowHint( GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE );
 #else
-	const int glMinor        = 3;
-	const char* glslVersion  = "#version 430";
+	//LS_GL41=1: the macOS path (OpenGL 4.1 core, GLSL 410) on Windows / Linux, for tests
+	const bool gl41          = getenv( "LS_GL41" ) != nullptr;
+	const int glMinor        = gl41 ? 1 : 3;
+	const char* glslVersion  = gl41 ? "#version 410" : "#version 430";
+	if( gl41 ) glfwWindowHint( GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE );
 #endif
 	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 4 );
 	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, glMinor );

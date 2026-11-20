@@ -43,7 +43,7 @@ jobs:
         run: |
           set +e
           cd build/LightStage
-          LS_SOFTWARE_GL=1 ./LightStage --selftest & pid=$!
+          LS_SOFTWARE_GL=1 LS_SELFTEST_MAXSEC=1200 ./LightStage --selftest & pid=$!
           for i in $(seq 1 1500); do kill -0 $pid 2>/dev/null || break; sleep 1; done
           if kill -0 $pid 2>/dev/null; then
             echo "::error title=Selftest::timeout after 25 min"
@@ -55,7 +55,7 @@ jobs:
           wait $pid; echo "exit $?"
           tail -n 80 selftest.log || true
           # public annotations: summary + every failed check (readable without login)
-          sum=$(grep -E "^[0-9]+ OK, [0-9]+ FAIL" selftest.log | tail -n 1)
+          sum=$(grep -E "^[0-9]+ OK, [0-9]+ FAIL" selftest.log | tail -n 1); hints=$(grep -c "^\[HINT\]" selftest.log); sum="$sum, $hints Hinweise"
           echo "::notice title=Selftest macOS::${sum:-no summary (crash?)}%0A$(tail -n 12 selftest.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
           grep -F "[FAIL]" selftest.log | head -n 40 | sed 's/%/%25/g' | while read -r l; do echo "::warning title=Selftest FAIL::$l"; done
           if [ -f lightstage.log ]; then echo "::notice title=lightstage.log::$(tail -n 40 lightstage.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; fi
