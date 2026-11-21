@@ -30,8 +30,9 @@ static ImU32 FixtureColor( int id, float a = 1.0f )
 //================================================================ lifecycle
 bool App::Init( std::string* err )
 {
-	exeDir = ExeDir();
-	lib.LoadAll( exeDir + LS_SEP "library" );
+	exeDir  = ExeDir();
+	userDir = UserDir();
+	lib.LoadAll( exeDir + LS_SEP "library", userDir != exeDir ? userDir + LS_SEP "library" : std::string() );
 	if( lib.defs.empty() ) Log( "warning: fixture library is empty (%s" LS_SEP "library)", exeDir.c_str() );
 	if( !ren.Init( err ) ) return false;
 	midi.Open();
@@ -113,7 +114,7 @@ bool App::RegisterEmbeddedFixture( const std::string& id, const Json& ofl )
 	size_t a = id.find( '/' ), b = id.find( '/', a + 1 );
 	if( a == std::string::npos || b == std::string::npos || !ofl.IsObj() ) return false;
 	const std::string mf = id.substr( a + 1, b - a - 1 ), key = id.substr( b + 1 );
-	const std::string root = exeDir + LS_SEP "library";
+	const std::string root = userDir + LS_SEP "library";
 	std::string mfName     = ofl[ "lightstageEditor" ][ "manufacturer" ].Str( mf );
 	RegisterUserManufacturer( root, mf, mfName );
 	MakeDir( root + LS_SEP "user" LS_SEP + mf );
@@ -1402,7 +1403,7 @@ void App::AutosaveTick()
 			{
 				recoverAsk_ = false;
 				//kept once more as a last copy
-				MoveFileReplace( RecoverFile(), exeDir + LS_SEP "autosave_verworfen.lightstage" );
+				MoveFileReplace( RecoverFile(), userDir + LS_SEP "autosave_verworfen.lightstage" );
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -2604,7 +2605,7 @@ void App::LoadSettings()
 	settingsLoaded_ = true;
 	std::string txt;
 	Json j;
-	if( !ReadText( exeDir + LS_SEP "settings.json", txt ) || !ParseJson( txt, j, nullptr ) ) return;
+	if( !ReadText( userDir + LS_SEP "settings.json", txt ) || !ParseJson( txt, j, nullptr ) ) return;
 	perfView_  = Clamp( j[ "perfView" ].I( 1 ), 0, 2 );
 	perfFps_   = Clamp( j[ "perfFps" ].F( 20 ), 2.0f, 120.0f );
 	perfScale_ = Clamp( j[ "perfScale" ].F( 0.5f ), 0.2f, 1.0f );
@@ -2635,7 +2636,7 @@ void App::SaveSettings()
 	j.Set( "qualityAuto", qualityAuto_ );
 	if( !languageSaved_.empty() ) j.Set( "language", languageSaved_ );
 	j.Set( "autosaveMinutes", autosaveMin );//only what the user chose (View > Language)
-	WriteText( exeDir + LS_SEP "settings.json", WriteJson( j, true ) );
+	WriteText( userDir + LS_SEP "settings.json", WriteJson( j, true ) );
 }
 
 void App::PerfWindow()

@@ -74,6 +74,7 @@ public:
 	bool uiScaled_ = false;
 	ImFont* fontBig  = nullptr;
 	std::string exeDir;
+	std::string userDir;//writable: settings, autosave, own fixtures / effects (= exeDir except in a macOS app bundle)
 	bool demoFx    = false;
 	std::string startTab;//select this bottom tab on start (--tab)
 	int startScreen = -1;//select this screen in the Video tab (--screen)
@@ -123,10 +124,10 @@ public:
 	//MIDI mappings as files
 	bool ExportMidi( const std::string& file );
 	int ImportMidi( const std::string& file, bool replace );//number of mappings read, -1 = error
-	std::string MidiDefaultFile() const { return exeDir + LS_SEP "midi_default.lsmidi"; }
+	std::string MidiDefaultFile() const { return userDir + LS_SEP "midi_default.lsmidi"; }
 	//effects + tempo (engine thread or UI when the engine is off)
 	void UpdateEffects( double now );
-	std::string UserFxFile() const { return exeDir + LS_SEP "library" LS_SEP "user" LS_SEP "effects.json"; }
+	std::string UserFxFile() const { return userDir + LS_SEP "library" LS_SEP "user" LS_SEP "effects.json"; }
 	//right-click menu on the last widget: copy the OSC address / MIDI learn; in learn mode it is learnable
 	void OscContext( const std::string& addr );
 	//Ableton Control-device knobs / buttons (both ways, see Show::ableton)
@@ -247,8 +248,8 @@ public:
 	//1.2: autosave (normal runs only, not the self test): every few minutes while there are unsaved changes;
 	//after a crash the next start offers to restore it
 	int autosaveMin = 2;//0 = off (settings.json)
-	std::string AutosaveFile() const { return exeDir + LS_SEP "autosave.lightstage"; }
-	std::string RecoverFile() const { return exeDir + LS_SEP "autosave_recover.lightstage"; }
+	std::string AutosaveFile() const { return userDir + LS_SEP "autosave.lightstage"; }
+	std::string RecoverFile() const { return userDir + LS_SEP "autosave_recover.lightstage"; }
 	bool AutosaveWrite( const std::string& file );
 	bool AutosaveRecover( const std::string& file );//loads it, keeps the original file name, marks unsaved
 	void AutosaveClear();

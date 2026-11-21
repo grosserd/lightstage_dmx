@@ -184,6 +184,26 @@ std::string ExeDir()
 #endif
 }
 
+std::string UserDir()
+{
+#ifdef __APPLE__
+	//an app bundle may be read-only (signed, in /Applications, translocated): own data in Application Support
+	static const std::string dir = [] {
+		const std::string e    = ExeDir();
+		const std::string tail = "/Contents/Resources";
+		if( e.size() < tail.size() || e.compare( e.size() - tail.size(), tail.size(), tail ) != 0 ) return e;//plain build: next to the binary
+		const char* home = getenv( "HOME" );
+		if( !home || !*home ) return e;
+		const std::string d = std::string( home ) + "/Library/Application Support/LightStage";
+		MakeDirs( d );
+		return d;
+	}();
+	return dir;
+#else
+	return ExeDir();
+#endif
+}
+
 bool ReadFile( const std::string& path, std::vector< uint8_t >& out )
 {
 	std::ifstream f( FsPath( path ), std::ios::binary );
@@ -400,7 +420,7 @@ void Log( const char* fmt, ... )
 		f = _wfsopen( Widen( ExeDir() + "\\lightstage.log" ).c_str(), L"w", _SH_DENYWR );//others may read while it runs
 #else
 	if( !f )
-		f = fopen( ( ExeDir() + "/lightstage.log" ).c_str(), "w" );// MACOS-UNTESTED: not writable inside a signed app bundle
+		f = fopen( ( UserDir() + "/lightstage.log" ).c_str(), "w" );
 #endif
 	if( f )
 	{

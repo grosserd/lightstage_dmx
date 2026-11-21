@@ -35,6 +35,23 @@ jobs:
           fi
           exit $rc
 
+      - name: Package (app bundle, ad-hoc signature, dmg)
+        if: success()
+        shell: bash
+        run: |
+          set -e
+          app=build/LightStage/LightStage.app
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app" && echo "signature ok (ad-hoc)"
+          mkdir -p dist && cp -R "$app" dist/
+          ln -s /Applications dist/Applications
+          hdiutil create -volname "LightStage" -srcfolder dist -ov -format UDZO LightStage-macos-arm64.dmg
+          plist=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" -c "Print :CFBundleShortVersionString" -c "Print :LSMinimumSystemVersion" "$app/Contents/Info.plist" | tr '\n' ' ')
+          icon=$( [ -f "$app/Contents/Resources/LightStage.icns" ] && echo "icns ok" || echo "NO icns" )
+          size=$(du -sh LightStage-macos-arm64.dmg | cut -f1)
+          files=$(ls "$app/Contents/Resources" | tr '\n' ' ')
+          echo "::notice title=App bundle::$plist| $icon | dmg $size | Resources: $files | $(lipo -archs "$app/Contents/MacOS/LightStage")"
+
       - name: Self test
         if: success()
         continue-on-error: true
@@ -42,47 +59,24 @@ jobs:
         shell: bash
         run: |
           set +e
-          cd build/LightStage
-          LS_SOFTWARE_GL=1 LS_SELFTEST_MAXSEC=1200 ./LightStage --selftest & pid=$!
+          # inside the app bundle: program data in Contents/Resources, own data (log, settings) in Application Support
+          cd build/LightStage/LightStage.app/Contents/Resources
+          LS_SOFTWARE_GL=1 LS_SELFTEST_MAXSEC=1200 ../MacOS/LightStage --selftest & pid=$!
           for i in $(seq 1 1500); do kill -0 $pid 2>/dev/null || break; sleep 1; done
           if kill -0 $pid 2>/dev/null; then
             echo "::error title=Selftest::timeout after 25 min"
             sample $pid 3 -file sample.txt >/dev/null 2>&1
-            # main thread + other threads: the frames from LightStage's own code
             echo "::warning title=Hang stack (LightStage frames)::$(grep -E 'ls::|main|Selftest|RunSelfTest' sample.txt | sed -E 's/^[ +!:|]*//' | head -n 40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             kill -9 $pid
           fi
           wait $pid; echo "exit $?"
           tail -n 80 selftest.log || true
-          # public annotations: summary + every failed check (readable without login)
-          sum=$(grep -E "^[0-9]+ OK, [0-9]+ FAIL" selftest.log | tail -n 1); hints=$(grep -c "^\[HINT\]" selftest.log); sum="$sum, $hints Hinweise"
-          echo "::notice title=Selftest macOS::${sum:-no summary (crash?)}%0A$(tail -n 12 selftest.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+          sum=$(grep -E "^[0-9]+ OK, [0-9]+ FAIL" selftest.log | tail -n 1); hints=$(grep -c "^\[HINT\]" selftest.log); oks=$(grep -c "^\[ OK \]" selftest.log); sum="${sum:-(no summary) $oks OK so far}, $hints Hinweise"
+          echo "::notice title=Selftest macOS::${sum}%0A$(tail -n 12 selftest.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
           grep -F "[FAIL]" selftest.log | head -n 40 | sed 's/%/%25/g' | while read -r l; do echo "::warning title=Selftest FAIL::$l"; done
-          if [ -f lightstage.log ]; then echo "::notice title=lightstage.log::$(tail -n 40 lightstage.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; fi
+          logf="$HOME/Library/Application Support/LightStage/lightstage.log"
+          if [ -f "$logf" ]; then echo "::notice title=lightstage.log (Application Support)::$(tail -n 40 "$logf" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; else echo "::warning title=lightstage.log::not found in Application Support"; fi
 
-      - name: Image probe
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          cd build/LightStage
-          python3 -m pip install --quiet --break-system-packages pillow >/dev/null 2>&1 || python3 -m pip install --quiet pillow >/dev/null 2>&1
-          for f in selftest_outdoor_sky.png selftest_outdoor_grass.png selftest_outdoor_concrete.png selftest_hall_ref.png; do
-            [ -f "$f" ] || continue
-            prof=$(python3 - "$f" <<'PY'
-          import sys
-          from PIL import Image
-          im = Image.open(sys.argv[1]).convert('RGB'); w, h = im.size
-          rows = []
-          for k in range(10):
-              y0, y1 = h * k // 10, h * (k + 1) // 10
-              px = [im.getpixel((x, y)) for y in range(y0, y1, 4) for x in range(0, w, 8)]
-              n = len(px); rows.append('%3d-%3d%%: R %3d G %3d B %3d' % (k*10, k*10+10, sum(p[0] for p in px)//n, sum(p[1] for p in px)//n, sum(p[2] for p in px)//n))
-          print('%dx%d%%0A' % (w, h) + '%0A'.join(rows))
-          PY
-          )
-            echo "::notice title=Image $f::$prof"
-          done
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,7 +84,7 @@ jobs:
           name: LightStage-macos-arm64
           path: |
             build.log
-            build/LightStage/
+            LightStage-macos-arm64.dmg
           if-no-files-found: warn
 
   windows:

@@ -249,7 +249,7 @@ static int RunLightStage( const std::vector< std::string >& av )
 	{
 		std::string txt;
 		Json j;
-		if( ReadText( ExeDir() + LS_SEP "settings.json", txt ) && ParseJson( txt, j, nullptr ) ) SetLang( j[ "language" ].Str( "en" ) );
+		if( ReadText( UserDir() + LS_SEP "settings.json", txt ) && ParseJson( txt, j, nullptr ) ) SetLang( j[ "language" ].Str( "en" ) );
 	}
 	if( !lang.empty() ) SetLang( lang );
 	if( selftest ) gLang = kLangDe;

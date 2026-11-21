@@ -1682,7 +1682,7 @@ bool ParseGdtf( const std::string& path, FixtureDef& d, std::string* err )
 }
 
 //---------------------------------------------------------------- library
-void Library::LoadAll( const std::string& root )
+void Library::LoadAll( const std::string& root, const std::string& userRoot )
 {
 	Gobos().Init();
 	double t0 = Now();
@@ -1714,10 +1714,14 @@ void Library::LoadAll( const std::string& root )
 			else { ++bad; Log( "fixture error %s: %s", f.c_str(), err.c_str() ); }
 		}
 	};
-	loadDir( root + LS_SEP "user", "user/" );//own fixtures from the fixture editor
+	const std::string own = userRoot.empty() ? root : userRoot;
+	loadDir( own + LS_SEP "user", "user/" );//own fixtures from the fixture editor
 	loadDir( root + LS_SEP "generic", "generic/" );
 	loadDir( root + LS_SEP "ofl", "ofl/" );
-	for( auto& f : ListFiles( root + LS_SEP "gdtf", ".gdtf", true ) )
+	std::vector< std::string > gdtf = ListFiles( root + LS_SEP "gdtf", ".gdtf", true );
+	if( own != root )
+		for( auto& f : ListFiles( own + LS_SEP "gdtf", ".gdtf", true ) ) gdtf.push_back( f );
+	for( auto& f : gdtf )
 	{
 		auto d = std::make_unique< FixtureDef >();
 		std::string err;

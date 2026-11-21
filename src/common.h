@@ -126,6 +126,7 @@ V3 Kelvin( float k );
 #endif
 inline bool IsPathSep( char c ) { return c == '\\' || c == '/'; }
 std::string ExeDir();//program data (assets, library); macOS app bundle: Contents/Resources
+std::string UserDir();//writable data (settings, log, autosave, own fixtures / effects): = ExeDir, except in a macOS app bundle: ~/Library/Application Support/LightStage
 bool ReadFile( const std::string& path, std::vector< uint8_t >& out );
 bool ReadText( const std::string& path, std::string& out );
 bool WriteText( const std::string& path, const std::string& text );

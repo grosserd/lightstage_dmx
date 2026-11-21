@@ -1,12 +1,14 @@
-# LightStage - CMake build (Windows: Visual Studio 2022 / Build Tools; macOS: in preparation)
+# LightStage - CMake build (Windows: Visual Studio 2022 / Build Tools; macOS: Xcode command line tools)
 #
 #   cmake -S . -B build
 #   cmake --build build --config Release
 #
-# Result: build/LightStage/LightStage(.exe) with the folders assets and library next to it.
+# Result: build/LightStage/LightStage(.exe) with the folders assets and library next to it;
+# macOS: build/LightStage/LightStage.app (assets and library in Contents/Resources, own data in ~/Library/Application Support/LightStage).
 # build.bat (MSVC, Windows) stays as the quick build used by the self test scripts.
 
 cmake_minimum_required( VERSION 3.26 )
+set( CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version" )
 project( LightStage VERSION 2.1 LANGUAGES C CXX )
 if( APPLE )
 	#GLFW's Cocoa sources (.m) need Objective-C, the LightStage macOS backends (.mm) Objective-C++
@@ -98,6 +100,29 @@ elseif( APPLE )
 endif()
 if( WIN32 )
 	add_executable( LightStage WIN32 ${LS_SOURCES} src/app.rc )
+elseif( APPLE )
+	#app bundle: program icon (.icns) made from assets/lightstage.ico with the macOS tools sips + iconutil
+	set( LS_ICNS ${CMAKE_BINARY_DIR}/LightStage.icns )
+	find_program( LS_SIPS sips )
+	find_program( LS_ICONUTIL iconutil )
+	if( LS_SIPS AND LS_ICONUTIL AND NOT EXISTS ${LS_ICNS} )
+		set( LS_ISET ${CMAKE_BINARY_DIR}/LightStage.iconset )
+		file( MAKE_DIRECTORY ${LS_ISET} )
+		execute_process( COMMAND ${LS_SIPS} -s format png ${CMAKE_CURRENT_SOURCE_DIR}/assets/lightstage.ico --out ${CMAKE_BINARY_DIR}/lightstage_icon.png OUTPUT_QUIET ERROR_QUIET )
+		foreach( s 16 32 128 256 512 )
+			math( EXPR s2 "${s} * 2" )
+			execute_process( COMMAND ${LS_SIPS} -z ${s} ${s} ${CMAKE_BINARY_DIR}/lightstage_icon.png --out ${LS_ISET}/icon_${s}x${s}.png OUTPUT_QUIET ERROR_QUIET )
+			execute_process( COMMAND ${LS_SIPS} -z ${s2} ${s2} ${CMAKE_BINARY_DIR}/lightstage_icon.png --out ${LS_ISET}/icon_${s}x${s}@2x.png OUTPUT_QUIET ERROR_QUIET )
+		endforeach()
+		execute_process( COMMAND ${LS_ICONUTIL} -c icns ${LS_ISET} -o ${LS_ICNS} OUTPUT_QUIET ERROR_QUIET )
+	endif()
+	if( EXISTS ${LS_ICNS} )
+		set_source_files_properties( ${LS_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources )
+	else()
+		set( LS_ICNS "" )
+	endif()
+	add_executable( LightStage MACOSX_BUNDLE ${LS_SOURCES} ${LS_ICNS} )
+	set_target_properties( LightStage PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in )
 else()
 	add_executable( LightStage ${LS_SOURCES} )
 endif()
@@ -133,7 +158,12 @@ if( APPLE )
 endif()
 
 #program data next to the program (ExeDir): fonts / icon and the fixture library
+if( APPLE )
+	set( LS_DATA_DIR $<TARGET_BUNDLE_CONTENT_DIR:LightStage>/Resources )#inside LightStage.app
+else()
+	set( LS_DATA_DIR ${OUT_DIR} )
+endif()
 add_custom_command( TARGET LightStage POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/assets ${OUT_DIR}/assets
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/library ${OUT_DIR}/library
+	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/assets ${LS_DATA_DIR}/assets
+	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/library ${LS_DATA_DIR}/library
 	VERBATIM )

@@ -990,7 +990,7 @@ int RunSelfTest( App& app, const std::string& dir )
 
 	//---- phase B: fixture editor (own lamps as OFL JSON)
 	{
-		const std::string libRoot = app.exeDir + LS_SEP "library";
+		const std::string libRoot = app.userDir + LS_SEP "library";
 		std::vector< std::string > written;
 		auto add = []( EdFixture& e, EdType t ) {
 			EdChannel c = MakeChannel( t );

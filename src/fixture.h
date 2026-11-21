@@ -200,7 +200,7 @@ class Library
 public:
 	std::vector< std::unique_ptr< FixtureDef > > defs;
 	std::map< std::string, std::string > mfNames;
-	void LoadAll( const std::string& root );//root/ofl, root/generic, root/gdtf
+	void LoadAll( const std::string& root, const std::string& userRoot = "" );//root/ofl, root/generic, root/gdtf; own fixtures (user, gdtf) also from userRoot if set
 	const FixtureDef* Find( const std::string& id ) const;
 	const FixtureDef* LoadGdtf( const std::string& path );//adds to defs
 	//adds a definition or replaces the one with the same id in place (pointers stay valid)

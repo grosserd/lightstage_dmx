@@ -1088,7 +1088,7 @@ void App::EffectEditor( Effect& e )
 			if( ImGui::Button( L( "Als Preset speichern" ) ) )
 			{
 				std::string n = presetName_[ 0 ] ? presetName_ : e.name;
-				MakeDir( exeDir + LS_SEP "library" LS_SEP "user" );
+				MakeDirs( userDir + LS_SEP "library" LS_SEP "user" );
 				if( SaveUserFxPreset( UserFxFile(), n, e ) ) { SetStatus( L( "Preset gespeichert: " ) + n ); userPresetsLoaded_ = false; }
 				else SetStatus( L( "Preset konnte nicht gespeichert werden" ) );
 			}

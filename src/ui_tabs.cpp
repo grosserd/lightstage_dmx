@@ -2138,8 +2138,8 @@ void App::LibraryPopup()
 		if( !p.empty() )
 		{
 			//keep a copy in the library so the show can find it again
-			std::string dst = exeDir + LS_SEP "library" LS_SEP "gdtf" LS_SEP + FileName( p );
-			MakeDir( exeDir + LS_SEP "library" LS_SEP "gdtf" );
+			std::string dst = userDir + LS_SEP "library" LS_SEP "gdtf" LS_SEP + FileName( p );
+			MakeDirs( userDir + LS_SEP "library" LS_SEP "gdtf" );
 			CopyFileReplace( p, dst );
 			const FixtureDef* d = lib.LoadGdtf( dst );
 			if( d ) { add_.def = d; add_.lastSearch = "\x01"; }
