@@ -117,7 +117,7 @@ bool App::RegisterEmbeddedFixture( const std::string& id, const Json& ofl )
 	const std::string root = userDir + LS_SEP "library";
 	std::string mfName     = ofl[ "lightstageEditor" ][ "manufacturer" ].Str( mf );
 	RegisterUserManufacturer( root, mf, mfName );
-	MakeDir( root + LS_SEP "user" LS_SEP + mf );
+	MakeDirs( root + LS_SEP "user" LS_SEP + mf );
 	std::string path = root + LS_SEP "user" LS_SEP + mf + LS_SEP + key + ".json", err;
 	if( !WriteText( path, WriteJson( ofl, true ) ) ) return false;
 	auto nd = std::make_unique< FixtureDef >();

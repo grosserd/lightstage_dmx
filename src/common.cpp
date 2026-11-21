@@ -186,6 +186,13 @@ std::string ExeDir()
 
 std::string UserDir()
 {
+	//LS_USERDIR: separate writable folder for tests (the macOS app bundle layout on any platform)
+	if( const char* o = getenv( "LS_USERDIR" ) )
+		if( *o )
+		{
+			static const std::string od = [ o ] { MakeDirs( o ); return std::string( o ); }();
+			return od;
+		}
 #ifdef __APPLE__
 	//an app bundle may be read-only (signed, in /Applications, translocated): own data in Application Support
 	static const std::string dir = [] {

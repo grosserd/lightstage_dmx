@@ -870,7 +870,7 @@ std::string Slug( const std::string& s )
 
 void RegisterUserManufacturer( const std::string& libRoot, const std::string& slug, const std::string& name )
 {
-	MakeDir( libRoot + LS_SEP "user" );
+	MakeDirs( libRoot + LS_SEP "user" );
 	std::string mp = libRoot + LS_SEP "user" LS_SEP "manufacturers.json", txt;
 	Json mj        = Json::Obj();
 	if( ReadText( mp, txt ) ) ParseJson( txt, mj );
@@ -892,8 +892,8 @@ bool SaveUserFixture( const std::string& libRoot, const EdFixture& f, std::strin
 	}
 	const std::string mf = Slug( f.manufacturer ), key = Slug( f.name );
 	const std::string dir = libRoot + LS_SEP "user" LS_SEP + mf;
-	MakeDir( libRoot + LS_SEP "user" );
-	MakeDir( dir );
+	MakeDirs( libRoot + LS_SEP "user" );
+	MakeDirs( dir );
 	RegisterUserManufacturer( libRoot, mf, f.manufacturer );
 	outPath = dir + LS_SEP + key + ".json";
 	outId   = "user/" + mf + "/" + key;
